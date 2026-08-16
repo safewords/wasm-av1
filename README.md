@@ -63,7 +63,7 @@ demuxers.
 |---|---|
 | `cargo test --release` | Native: IVF parser, geometry, colour conversion against a float reference; every fixture in `testdata/` decodes to **the same MD5 libdav1d and libaom produce** (8-bit, 10-bit, 4:4:4, mono, film grain, odd 177×99); push mode ≡ IVF mode; MP4/fMP4/WebM via rivet ≡ IVF. |
 | `cargo test --release --target wasm32-unknown-unknown --test wasm_convert` (± `RUSTFLAGS=-C target-feature=+simd128`) | Inside wasm, in Node: the RGBA dispatch equals the scalar path on 55 shape/matrix combinations — the SIMD build's v128 code included. |
-| `node --test "test/*.test.mjs"` (after `scripts/build.sh`) | The built `.wasm`, both variants, same MD5s through the wasm-bindgen surface; SIMD and baseline RGBA **byte-identical**; container path; ms/frame. |
+| `node --test test/decode.test.mjs` (after `scripts/build.sh`) | The built `.wasm`, both variants, same MD5s through the wasm-bindgen surface; SIMD and baseline RGBA **byte-identical**; container path; ms/frame. |
 | `node test/browser.mjs` (needs Playwright) | Headless Chromium + Firefox × {baseline, simd} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM}: every frame shown, correctly paced, pixels on the canvas. |
 | `scripts/bench.mjs` | Decode speed on real 360p/720p/1080p clips (`scripts/fetch-samples.sh`), with libdav1d MD5 check. |
 

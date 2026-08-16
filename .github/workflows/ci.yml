@@ -74,7 +74,7 @@ jobs:
       - name: build baseline + simd
         run: bash scripts/build.sh
       - name: node tests against the built wasm
-        run: node --test "test/*.test.mjs"
+        run: node --test test/decode.test.mjs
       - name: sizes
         run: cat pkg/manifest.json && gzip -9 -c pkg/baseline/wasm_av1_bg.wasm | wc -c && gzip -9 -c pkg/simd/wasm_av1_bg.wasm | wc -c
       - uses: actions/upload-artifact@v4

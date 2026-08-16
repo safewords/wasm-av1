@@ -190,6 +190,12 @@ export class WebGLRenderer {
     return 'yuv';
   }
 
+  /**
+   * Release GL resources. Deliberately does NOT lose the context: a canvas
+   * that is reused for the next stream (a page's singleton player) gets the
+   * same context back from `getContext('webgl')`, and a lost one cannot be
+   * revived nor replaced by a 2D context on that canvas.
+   */
   destroy() {
     const gl = this.gl;
     this.textures.forEach((t) => gl.deleteTexture(t));
@@ -197,7 +203,8 @@ export class WebGLRenderer {
     gl.deleteBuffer(this.tex);
     gl.deleteProgram(this.progYuv.p);
     gl.deleteProgram(this.progRgba.p);
-    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
   }
 }
 

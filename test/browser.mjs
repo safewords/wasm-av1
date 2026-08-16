@@ -16,7 +16,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // A Playwright install: PLAYWRIGHT_DIR, else this package's node_modules, else
 // the sibling lewd-frontend checkout in devenv (which has one).
 const pwDir = process.env.PLAYWRIGHT_DIR
-  ?? [path.join(root, 'node_modules', 'playwright'), path.join(root, '..', '..', 'lewd', 'lewd-frontend', 'node_modules', 'playwright')]
+  ?? [join(root, 'node_modules', 'playwright'), join(root, '..', '..', 'lewd', 'lewd-frontend', 'node_modules', 'playwright')]
     .find((p) => { try { statSync(p); return true; } catch { return false; } })
   ?? 'playwright';
 const { chromium, firefox } = await import(pathToFileURL(join(pwDir, 'index.mjs')).href);
@@ -38,6 +38,10 @@ const base = `http://localhost:${server.address().port}`;
 // about the library, not the buttons.
 const harness = ({ file = 'testsrc-320x180-8bit.ivf', ...opts }) => `
   const canvas = document.createElement('canvas'); document.body.appendChild(canvas);
+  // A first player on the same canvas, played briefly and destroyed: the
+  // one below must still get a working context (a page's singleton canvas
+  // is reused for the next video).
+  { const warm = new Av1Player(canvas, ${JSON.stringify(opts)}); await warm.load((await (await fetch('${base}/testdata/${file}')).arrayBuffer()).slice(0)); warm.play(); await new Promise(r => setTimeout(r, 300)); warm.destroy(); }
   const p = new Av1Player(canvas, ${JSON.stringify(opts)});
   const errors = [];
   p.onerror = (e) => errors.push(String(e.message || e));

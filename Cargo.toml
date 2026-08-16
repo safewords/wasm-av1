@@ -1,0 +1,60 @@
+[package]
+name = "wasm-av1"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "AV1 decoding for the browser: rav1d compiled to WebAssembly, in a baseline and a SIMD build. A Rust port of GoogleChromeLabs/wasm-av1."
+repository = "https://github.com/safewords/wasm-av1"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The decoder. rav1d is memorysafety.org's Rust port of dav1d (BSD-2-Clause).
+# We take it from our fork's `wasm32-unknown-unknown` branch, which is upstream
+# `main` plus one commit making it build without a libc (see docs/rav1d.md).
+# Nothing of it is vendored here; Cargo.lock pins the exact revision.
+rav1d = { git = "https://github.com/safewords/rav1d", branch = "wasm32-unknown-unknown", default-features = false }
+# The demuxers: MP4/fMP4/CMAF, WebM/MKV, TS. rivet is the org's own transcoder;
+# its `rivet-container` crate hands us AV1 temporal units + pts straight out of
+# a container. From our `wasm32-demux` branch, which is rivet `develop` plus the
+# commit that lets the crate build without rivet-codec (see docs/rivet.md).
+# Optional: without the `container` feature only IVF and raw temporal units are
+# accepted, and the .wasm is smaller.
+container = { git = "https://github.com/rivet-transcoder/rivet", branch = "wasm32-demux", package = "rivet-container", default-features = false, optional = true }
+bytes = { version = "1", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+md-5 = "0.10"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+default = ["bitdepth_8", "bitdepth_16", "container"]
+# MP4/fMP4/WebM/TS input via rivet-container (`setSourceContainer`).
+container = ["dep:container", "dep:bytes"]
+# Which sample depths the decoder is compiled for. Dropping `bitdepth_16` makes
+# the .wasm noticeably smaller if every stream you serve is 8-bit.
+bitdepth_8 = ["rav1d/bitdepth_8"]
+bitdepth_16 = ["rav1d/bitdepth_16"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = "debuginfo"
+
+# The native harness/tests decode real streams; unoptimised rav1d is painfully slow.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.test]
+opt-level = 2

@@ -1,0 +1,4 @@
+# `cargo test --target wasm32-unknown-unknown` runs the wasm-bindgen tests in Node
+# (the runner is installed alongside wasm-bindgen-cli).
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"

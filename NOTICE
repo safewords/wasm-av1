@@ -1,0 +1,16 @@
+wasm-av1
+Copyright 2026 safewords
+
+This product is a Rust port of "wasm-av1" (https://github.com/GoogleChromeLabs/wasm-av1),
+Copyright 2018 Google LLC, licensed under the Apache License, Version 2.0.
+The decoder driving loop, IVF/blob data-source, frame ring buffer, YUV→RGB
+conversion, WebGL renderer and demo page here derive from that project's
+decode-av1.c, blob-api.c, yuv-to-rgb.c, draw-image.js and index.html.
+
+It links, but does not include, the following at build time:
+  rav1d            https://github.com/memorysafety/rav1d       BSD-2-Clause
+                   (via https://github.com/safewords/rav1d, branch wasm32-unknown-unknown)
+  rivet-container  https://github.com/rivet-transcoder/rivet   Open Encoding Attribution License 1.0
+                   (optional, feature `container`; branch wasm32-demux)
+Their licence texts ship with their sources; a distribution that bundles a
+built .wasm carries their notices as their licences require.

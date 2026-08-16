@@ -1,0 +1,31 @@
+{
+  "name": "@safewords/wasm-av1",
+  "version": "0.1.0",
+  "description": "AV1 decoding for the browser: rav1d compiled to WebAssembly (baseline + SIMD), with a small streaming API. Rust port of GoogleChromeLabs/wasm-av1.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "./js/index.js",
+  "exports": {
+    ".": "./js/index.js",
+    "./worker": "./js/worker.js",
+    "./pkg/*": "./pkg/*"
+  },
+  "files": [
+    "js",
+    "pkg",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "test": "bash scripts/build.sh && node --test \"test/*.test.mjs\"",
+    "test:node": "node --test \"test/*.test.mjs\"",
+    "serve": "node scripts/serve.mjs",
+    "bench": "node scripts/bench.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

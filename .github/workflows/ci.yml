@@ -1,0 +1,80 @@
+# Prove the decoder: native tests against the ffmpeg reference MD5s, then the
+# two wasm variants driven from Node, then the wasm build artefacts.
+#
+# Private repository, so the fleet runners (safewords/actions-runner-image:
+# rust stable + wasm32 target + node preinstalled). The wasm-bindgen CLI is
+# pinned to the crate version in Cargo.lock; binaryen comes from GitHub
+# releases so wasm-opt runs the same version everywhere.
+name: wasm-av1
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_CACHE_SIZE: "5G"
+  WASM_BINDGEN_VERSION: 0.2.127
+  BINARYEN_VERSION: version_123
+
+jobs:
+  native:
+    name: cargo fmt, clippy, test
+    runs-on: safewords-runners
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build tools (bare ARC runner image)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential pkg-config
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # Optimised: rav1d in debug decodes the fixtures painfully slowly.
+      - run: cargo test --release
+      - name: also without the container feature
+        run: cargo test --release --no-default-features --features bitdepth_8,bitdepth_16
+
+  wasm:
+    name: build both variants, test them in Node
+    runs-on: safewords-runners
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build tools (bare ARC runner image)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential pkg-config
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: wasm-bindgen-cli ${{ env.WASM_BINDGEN_VERSION }}
+        run: |
+          mkdir -p "$HOME/.cargo/bin"
+          curl -fsSL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${WASM_BINDGEN_VERSION}/wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar -xz --strip-components=1 -C "$HOME/.cargo/bin" --wildcards '*/wasm-bindgen' '*/wasm-bindgen-test-runner'
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/wasm-bindgen" --version
+      - name: binaryen (wasm-opt)
+        run: |
+          mkdir -p "$HOME/binaryen"
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz" | tar -xz --strip-components=1 -C "$HOME/binaryen"
+          echo "$HOME/binaryen/bin" >> "$GITHUB_PATH"
+          "$HOME/binaryen/bin/wasm-opt" --version
+      - name: build baseline + simd
+        run: bash scripts/build.sh
+      - name: node tests against the built wasm
+        run: node --test "test/*.test.mjs"
+      - name: sizes
+        run: cat pkg/manifest.json && gzip -9 -c pkg/baseline/wasm_av1_bg.wasm | wc -c && gzip -9 -c pkg/simd/wasm_av1_bg.wasm | wc -c
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg
+          path: pkg/
+          retention-days: 14

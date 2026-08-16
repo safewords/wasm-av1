@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wasm-av1 — AV1 in WebAssembly (rav1d)</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #fafafa; --muted: #666; --line: #ddd; --accent: #7a3cff; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #121212; --muted: #999; --line: #333; } }
+  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h1 small { font-weight: normal; color: var(--muted); }
+  p.lead { margin: 0 0 12px; color: var(--muted); }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+  legend { color: var(--muted); padding: 0 4px; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+  button { font: inherit; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .stage { position: relative; background: #000; border-radius: 6px; overflow: hidden; }
+  canvas { display: block; width: 100%; height: auto; image-rendering: auto; }
+  .stats { position: absolute; left: 8px; top: 8px; font: 12px/1.35 ui-monospace, monospace; background: rgba(0,0,0,.6); color: #fff; padding: 6px 8px; border-radius: 4px; white-space: pre; pointer-events: none; }
+  .log { font: 12px ui-monospace, monospace; color: var(--muted); margin-top: 8px; white-space: pre-wrap; }
+  .env { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>wasm-av1 <small>— AV1 decoded in WebAssembly by <a href="https://github.com/memorysafety/rav1d">rav1d</a>, a Rust port of <a href="https://github.com/GoogleChromeLabs/wasm-av1">GoogleChromeLabs/wasm-av1</a></small></h1>
+  <p class="lead">Pick an AV1 file — IVF, or MP4 / fragmented MP4 / WebM / MPEG-TS demuxed in-wasm by <a href="https://github.com/rivet-transcoder/rivet">rivet</a> — or one of the samples (<code>scripts/fetch-samples.sh</code> puts the BBB clips in place). Playback is paced by the stream's own timestamps.</p>
+  <div class="env" id="env">detecting…</div>
+
+  <fieldset>
+    <legend>Source</legend>
+    <input type="file" id="file" accept=".ivf,.mp4,.m4v,.webm,.mkv,.ts,video/*">
+    <button data-url="../testdata/samples/bbb-360p.mp4">BBB 360p (mp4)</button>
+    <button data-url="../testdata/samples/bbb-720p.mp4">BBB 720p (mp4)</button>
+    <button data-url="../testdata/samples/bbb-1080p.ivf">BBB 1080p (ivf)</button>
+    <button data-url="../testdata/testsrc-320x180-8bit.fmp4">fixture 320×180 (fMP4)</button>
+    <button data-url="../testdata/testsrc-320x180-8bit.webm">fixture (webm)</button>
+    <button data-url="../testdata/testsrc-160x90-10bit.ivf">fixture 10-bit (ivf)</button>
+  </fieldset>
+  <fieldset>
+    <legend>Decoder</legend>
+    <label>build <select id="variant"><option value="auto">auto</option><option value="simd">simd</option><option value="baseline">baseline</option></select></label>
+    <label>renderer <select id="renderer"><option value="auto">auto</option><option value="webgl">webgl (YUV shader)</option><option value="2d">2d (wasm RGBA)</option></select></label>
+    <label><input type="checkbox" id="worker"> decode in a Worker</label>
+    <label><input type="checkbox" id="grain" checked> film grain</label>
+    <label>decode budget/tick <input type="number" id="budget" value="8" min="1" max="50" style="width:4em"> ms</label>
+    <button id="play" class="primary" disabled>Play</button>
+    <button id="pause" disabled>Pause</button>
+  </fieldset>
+
+  <div class="stage">
+    <canvas id="view" width="704" height="480"></canvas>
+    <div class="stats" id="stats"></div>
+  </div>
+  <div class="log" id="log"></div>
+</main>
+
+<script type="module">
+  import { Av1Player, chooseVariant, detectSimd, detectBaseline } from '../js/index.js';
+
+  const $ = (id) => document.getElementById(id);
+  const log = (s) => { $('log').textContent = (s + '\n' + $('log').textContent).slice(0, 4000); };
+  $('env').textContent = `wasm SIMD: ${detectSimd() ? 'yes' : 'no'} · baseline features: ${detectBaseline() ? 'yes' : 'no'} · auto picks: ${chooseVariant() ?? 'nothing (unsupported browser)'} · ${navigator.userAgent}`;
+
+  let player = null;
+  let bytes = null;
+
+  async function rebuild() {
+    if (player) player.destroy();
+    player = new Av1Player($('view'), {
+      variant: $('variant').value,
+      renderer: $('renderer').value,
+      worker: $('worker').checked,
+      applyGrain: $('grain').checked,
+      decodeBudgetMs: Number($('budget').value) || 8,
+    });
+    player.onerror = (e) => log('error: ' + (e.message || e));
+    player.onstate = (s) => {
+      $('play').disabled = !(s === 'ready' || s === 'paused');
+      $('pause').disabled = s !== 'playing';
+      if (s === 'ended') {
+        const st = player.stats;
+        log(`ended: ${st.framesShown} frames shown, ${st.framesDropped} dropped; decode ${(st.decodeMs / Math.max(1, st.decoder?.framesOut || st.framesShown)).toFixed(2)} ms/frame, draw ${(st.drawMs / Math.max(1, st.framesShown)).toFixed(2)} ms/frame, max run ${st.maxRunMs.toFixed(1)} ms`);
+      }
+    };
+    player.onstats = (st) => {
+      const decoded = st.decoder?.framesOut || 0;
+      $('stats').textContent =
+        `${st.variant ?? '…'}${st.simd ? ' (simd128)' : ''} · ${st.renderer}${st.drawPath ? '/' + st.drawPath : ''}${st.worker ? ' · worker' : ' · main thread'}\n` +
+        `shown ${st.framesShown}  dropped ${st.framesDropped}  buffered ${st.buffered}  ${st.fps} fps\n` +
+        (st.worker ? `decoded ${decoded}` : `decode ${(decoded ? st.decodeMs / decoded : 0).toFixed(2)} ms/frame  max run ${st.maxRunMs.toFixed(1)} ms`) +
+        `  draw ${(st.framesShown ? st.drawMs / st.framesShown : 0).toFixed(2)} ms/frame`;
+    };
+    await player.init();
+    if (bytes) await load();
+  }
+
+  async function load() {
+    const info = await player.load(bytes.slice(0));
+    log(`loaded ${info.width}×${info.height}, time base ${info.timeBase ? (1 / info.timeBase).toFixed(0) + ' ticks/s' : 'unknown'}${info.frameCount ? ', header says ' + info.frameCount + ' frames' : ''}; build ${player.stats.variant}${player.stats.simd ? ' (simd128)' : ''}, renderer ${player.rendererKind}`);
+  }
+
+  for (const id of ['variant', 'renderer', 'worker', 'grain', 'budget']) $(id).addEventListener('change', rebuild);
+  $('play').onclick = () => player.play();
+  $('pause').onclick = () => player.pause();
+  $('file').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    bytes = await f.arrayBuffer();
+    log(`file ${f.name}: ${(bytes.byteLength / 1e6).toFixed(1)} MB`);
+    await load();
+  };
+  for (const b of document.querySelectorAll('button[data-url]')) {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        log(`fetching ${b.dataset.url} …`);
+        const r = await fetch(b.dataset.url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        bytes = await r.arrayBuffer();
+        log(`fetched ${(bytes.byteLength / 1e6).toFixed(1)} MB`);
+        await load();
+      } catch (e) {
+        log('fetch failed: ' + e.message);
+      } finally {
+        b.disabled = false;
+      }
+    };
+  }
+  await rebuild();
+</script>
+</body>
+</html>

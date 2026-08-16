@@ -27,6 +27,8 @@ export class WorkerDecoder {
     this.onerror = null;
     this.onframe = null;
     this._waiters = [];
+    this._replies = new Map(); // tag → resolve, for request/response messages
+    this._tag = 0;
     // Bundlers (Vite, webpack) only recognise a worker entry when the URL is
     // built inline in the `new Worker(...)` call; a variable defeats it and
     // the file gets copied as a plain asset with its bare imports intact.
@@ -91,6 +93,10 @@ export class WorkerDecoder {
       case 'segment':
         this.info = m.info;
         this.onsegment?.(m);
+        this._reply(m);
+        break;
+      case 'switched':
+        this._reply(m);
         break;
       case 'error': {
         const err = new Error(m.message);
@@ -105,6 +111,22 @@ export class WorkerDecoder {
     const w = this._waiters;
     this._waiters = [];
     w.forEach((r) => r());
+  }
+
+  _request(msg, transfer) {
+    const tag = ++this._tag;
+    return new Promise((resolve) => {
+      this._replies.set(tag, resolve);
+      this.worker.postMessage({ ...msg, tag }, transfer || []);
+    });
+  }
+
+  _reply(m) {
+    const r = this._replies.get(m.tag);
+    if (r) {
+      this._replies.delete(m.tag);
+      r(m);
+    }
   }
 
   _setSource(type, bytes) {
@@ -144,11 +166,25 @@ export class WorkerDecoder {
     this.worker.postMessage({ type: 'initSegment', data: buf }, [buf]);
   }
 
-  /** One media segment (transferred); demuxed in the worker, samples queued. */
+  /**
+   * One media segment (transferred); demuxed in the worker, samples queued.
+   * Resolves to `{samples, firstPts, lastPts, timeBase, error}` once the
+   * worker has queued it — `firstPts` is the segment boundary, exactly.
+   */
   pushSegment(bytes) {
     const buf = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     this.finished = false;
-    this.worker.postMessage({ type: 'segment', data: buf }, [buf]);
+    return this._request({ type: 'segment', data: buf }, [buf]);
+  }
+
+  /**
+   * Seamless rendition switch (see `Decoder.switchStream`): resolves to
+   * `{ok, dropped}`; `ok: false` = the decoder is already past `boundaryPts`.
+   */
+  switchStream({ boundaryPts = null, init }) {
+    const buf = init instanceof ArrayBuffer ? init : init.buffer.slice(init.byteOffset, init.byteOffset + init.byteLength);
+    this.finished = false;
+    return this._request({ type: 'switchStream', boundaryPts, init: buf }, [buf]);
   }
 
   endOfStream() {

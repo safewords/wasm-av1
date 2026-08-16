@@ -220,6 +220,57 @@ impl Av1Decoder {
         self.inner.pending_input() as u32
     }
 
+    /// pts of the first sample of the segment most recently pushed, or NaN.
+    #[wasm_bindgen(js_name = "lastSegmentFirstPts")]
+    pub fn last_segment_first_pts(&self) -> f64 {
+        #[cfg(feature = "container")]
+        {
+            self.inner
+                .last_segment_pts()
+                .map_or(f64::NAN, |(f, _)| f as f64)
+        }
+        #[cfg(not(feature = "container"))]
+        {
+            f64::NAN
+        }
+    }
+
+    /// pts of the last sample of the segment most recently pushed, or NaN.
+    #[wasm_bindgen(js_name = "lastSegmentLastPts")]
+    pub fn last_segment_last_pts(&self) -> f64 {
+        #[cfg(feature = "container")]
+        {
+            self.inner
+                .last_segment_pts()
+                .map_or(f64::NAN, |(_, l)| l as f64)
+        }
+        #[cfg(not(feature = "container"))]
+        {
+            f64::NAN
+        }
+    }
+
+    /// pts of the next queued temporal unit (push mode), or NaN.
+    #[wasm_bindgen(js_name = "nextQueuedPts")]
+    pub fn next_queued_pts(&self) -> f64 {
+        self.inner.next_queued_pts().map_or(f64::NAN, |p| p as f64)
+    }
+
+    /// pts of the last temporal unit handed to the decoder, or NaN.
+    #[wasm_bindgen(js_name = "lastSentPts")]
+    pub fn last_sent_pts(&self) -> f64 {
+        self.inner.last_sent_pts().map_or(f64::NAN, |p| p as f64)
+    }
+
+    /// Push mode: drop the queued, not-yet-decoded temporal units with
+    /// `pts >= pts` (a rendition switch replaces the future from a segment
+    /// boundary the decoder has not reached — no flush, no gap). Returns how
+    /// many were dropped. See `Decoder::truncate_queued_from`.
+    #[wasm_bindgen(js_name = "truncateQueuedFrom")]
+    pub fn truncate_queued_from(&mut self, pts: f64) -> u32 {
+        self.inner.truncate_queued_from(pts as i64) as u32
+    }
+
     /// Drop everything buffered, reset rav1d; IVF sources rewind.
     pub fn flush(&mut self) -> Result<(), JsError> {
         self.inner.flush().map_err(js_err)

@@ -63,8 +63,18 @@ export class Av1Player {
       framesShown: 0, framesDropped: 0, decodeMs: 0, drawMs: 0, maxRunMs: 0, runs: 0,
       buffered: 0, fps: 0, variant: null, simd: null, threads: 1, renderer: this.rendererKind, drawPath: null, worker: this.opts.worker,
       decoder: null,
+      // Stutter as the viewer sees it, beyond dropped frames:
+      //   lateFrames — a frame painted more than one frame interval after it
+      //                was due (it was shown, but the picture hitched);
+      //   stalls / stallMs — nothing buffered while the clock ran past the
+      //                last frame by more than two intervals: the decoder is
+      //                not keeping up (or the network is not).
+      lateFrames: 0, stalls: 0, stallMs: 0, maxLateMs: 0,
     };
     this._fpsWindow = [];
+    this._lastDue = null;
+    this._frameDur = null;
+    this._stalledSince = null;
   }
 
   _setState(s) {
@@ -218,7 +228,9 @@ export class Av1Player {
     // due too, this one is late: drop it (skip the draw) and move on. Peeking
     // by pts means the current frame is never invalidated before it is drawn.
     let toShow = null;
+    let showDue = null;
     while (this.src.framesBuffered > 0 && this._peekDue() <= now) {
+      const due = this._peekDue();
       const f = this.src.nextFrame();
       if (!f) break;
       this._frameIndex++;
@@ -228,7 +240,37 @@ export class Av1Player {
         continue;
       }
       toShow = f;
+      showDue = due;
       break;
+    }
+    // Stutter accounting: frame interval from consecutive due times; a
+    // shown frame more than one interval late is a hitch; nothing buffered
+    // while the clock has run more than two intervals past the last frame
+    // (and the stream is not over) is a stall.
+    const frameDur = this._frameDur ?? 1 / (this._timeBase ? Math.min(120, Math.max(10, 1 / this._timeBase)) : this.opts.fallbackFps);
+    if (toShow) {
+      if (this._lastDue != null && showDue > this._lastDue) {
+        const d = showDue - this._lastDue;
+        if (d > 1 / 240 && d < 1 / 5) this._frameDur = this._frameDur == null ? d : Math.min(this._frameDur, d);
+      }
+      this._lastDue = showDue;
+      const late = now - showDue;
+      if (late > frameDur) {
+        this.stats.lateFrames++;
+        if (late * 1000 > this.stats.maxLateMs) this.stats.maxLateMs = late * 1000;
+      }
+      if (this._stalledSince != null) {
+        this.stats.stallMs += tickStart - this._stalledSince;
+        this._stalledSince = null;
+      }
+    } else if (
+      this.src.framesBuffered === 0 && !this.src.finished && this._lastDue != null
+      && now - this._lastDue > 2 * frameDur && (this.opts.clock || this.state === 'playing')
+    ) {
+      if (this._stalledSince == null) {
+        this._stalledSince = tickStart;
+        this.stats.stalls++;
+      }
     }
     if (toShow) {
       const t = performance.now();

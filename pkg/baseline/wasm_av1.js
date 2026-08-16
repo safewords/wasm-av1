@@ -185,6 +185,30 @@ export class Av1Decoder {
         return ret >>> 0;
     }
     /**
+     * pts of the first sample of the segment most recently pushed, or NaN.
+     * @returns {number}
+     */
+    lastSegmentFirstPts() {
+        const ret = wasm.av1decoder_lastSegmentFirstPts(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * pts of the last sample of the segment most recently pushed, or NaN.
+     * @returns {number}
+     */
+    lastSegmentLastPts() {
+        const ret = wasm.av1decoder_lastSegmentLastPts(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * pts of the last temporal unit handed to the decoder, or NaN.
+     * @returns {number}
+     */
+    lastSentPts() {
+        const ret = wasm.av1decoder_lastSentPts(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * `maxBuffered` frames kept ahead (default 10, upstream's
      * `NUM_FRAMES_BUFFERED`); `applyGrain` toggles film-grain synthesis
      * (default true); `threads` rav1d worker threads (default 1; more only
@@ -210,6 +234,14 @@ export class Av1Decoder {
     nextFrame() {
         const ret = wasm.av1decoder_nextFrame(this.__wbg_ptr);
         return ret !== 0;
+    }
+    /**
+     * pts of the next queued temporal unit (push mode), or NaN.
+     * @returns {number}
+     */
+    nextQueuedPts() {
+        const ret = wasm.av1decoder_nextQueuedPts(this.__wbg_ptr);
+        return ret;
     }
     /**
      * pts of the oldest buffered frame (the one `nextFrame` would return),
@@ -400,6 +432,18 @@ export class Av1Decoder {
      */
     timeBaseNum() {
         const ret = wasm.av1decoder_timeBaseNum(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Push mode: drop the queued, not-yet-decoded temporal units with
+     * `pts >= pts` (a rendition switch replaces the future from a segment
+     * boundary the decoder has not reached — no flush, no gap). Returns how
+     * many were dropped. See `Decoder::truncate_queued_from`.
+     * @param {number} pts
+     * @returns {number}
+     */
+    truncateQueuedFrom(pts) {
+        const ret = wasm.av1decoder_truncateQueuedFrom(this.__wbg_ptr, pts);
         return ret >>> 0;
     }
     /**

@@ -74,14 +74,58 @@ flowchart TD
 Every CMAF segment starts on a keyframe, so a seek lands on the segment
 holding the target and drops the frames before it (at most one segment).
 
-## Which rung
+## Which rung: measure both, take the lower
 
-Measure, do not guess: start on a rung the device can plainly do (a laptop:
-720p; a phone: 360p/480p), watch `stats.framesDropped` against
-`stats.framesShown`, step up when drops stay under a couple of percent and the
-next rung fits the element, step down over ~10 %. Single-threaded, the SIMD
+Two things bound the rung, and `HlsAv1Video` measures both so the player can
+take the intersection:
+
+- **Network.** `stats.bandwidth` is a bits/s estimate from the player's own
+  segment downloads (hls.js-style: two EWMAs, the estimate is the lower —
+  a slow-down is believed at once, a burst is not);
+  `variantForBandwidth({ factor: 0.8, maxHeight })` is the highest rung whose
+  declared BANDWIDTH fits under it. `stats.bufferAhead` (seconds of segments
+  pushed beyond the clock) running low, or `stats.slowFetches` growing
+  (a download slower than the segment it carried), means step down now.
+- **Decode/render.** Stutter as the viewer sees it, beyond
+  `framesDropped`: `stats.lateFrames` (a frame painted more than one frame
+  interval after it was due — a hitch), `stats.stalls` / `stallMs` (nothing
+  buffered while the clock ran past the last frame: the decoder is not
+  keeping up). Any stall, or dropped+late over ~8 % of a 2 s window, is a
+  strike against the rung: step down and keep off that height for a while
+  (60 s, doubling per strike) so you do not bounce straight back to it.
+- **Element size.** Never above the rung that fills the element.
+
+Step **up** only after a few clean windows in a row (under 2 % dropped+late,
+no stall, network fine), one rung at a time. Start on a rung the device can
+plainly do (a laptop: 720p; a phone: 360p/480p). Single-threaded, the SIMD
 build decodes 720p at ~110 fps and 1080p at ~60 fps on a laptop
 (docs/performance.md); an old phone is 3–8× slower.
+
+```mermaid
+flowchart LR
+    BW["bandwidth estimate<br/>(segment downloads)"] --> N["network ceiling:<br/>highest rung ≤ 80 % of it"]
+    ST["stutter: dropped, late,<br/>stalls per 2 s window"] --> D["decode ceiling:<br/>rung below any that stuttered<br/>(embargoed 60 s ×2 per strike)"]
+    EL["element height"] --> S[slot ceiling]
+    N --> M{"min"}
+    D --> M
+    S --> M
+    M -->|"below current: switch down now"| SW["selectVariant(rung, { at: 'boundary' })"]
+    M -->|"above current: after 3 clean windows, one rung up"| SW
+```
+
+### Switching without a gap
+
+`selectVariant(rung)` while playing switches **at the next segment boundary
+the decoder has not reached** — segments already pushed past it are
+un-queued and re-fetched from the new rung, the new init segment goes in,
+decoding never stops and nothing decoded is lost; the picture changes rung a
+segment later with no freeze (all rungs of a ladder start their segments on
+keyframes at the same times, which is what makes this exact). It resolves to
+`'boundary'`, or `'none'` when the decoder already holds everything to the
+end (nothing left to switch), or `'now'` if the playlists are not
+segment-aligned and it fell back to the hard switch — `{ at: 'now' }` asks
+for that directly: flush and refill from the segment holding the clock,
+which shows as a short freeze while it decodes up to the clock again.
 
 ## Threads
 

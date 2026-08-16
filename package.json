@@ -1,6 +1,6 @@
 {
   "name": "@safewords/wasm-av1",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "AV1 decoding for the browser: rav1d compiled to WebAssembly (baseline, SIMD and multi-threaded builds), with a small streaming API, HLS/CMAF glue and WebGL rendering. A Rust port of GoogleChromeLabs/wasm-av1.",
   "license": "Apache-2.0",
   "type": "module",

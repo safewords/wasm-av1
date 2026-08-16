@@ -7,8 +7,8 @@
 // the page acknowledges them. One copy per frame (wasm memory cannot be
 // transferred), which is what an ImageBitmap path would cost anyway.
 //
-// Messages in:  init | ivf | container | source | initSegment | segment | push | eos | flush | ack | close
-// Messages out: ready | info | frame | finished | error | spawnThread
+// Messages in:  init | ivf | container | source | initSegment | segment | switchStream | push | eos | flush | ack | close
+// Messages out: ready | info | frame | finished | error | spawnThread | segment | switched
 //
 // `init.threads` > 1 asks for a threads runtime (loader.js picks one when the
 // page is cross-origin isolated) and that many rav1d worker threads; `ready`
@@ -109,8 +109,27 @@ self.onmessage = async (ev) => {
         dec.setInitSegment(new Uint8Array(m.data));
         break;
       case 'segment': {
-        const n = dec.pushSegment(new Uint8Array(m.data));
-        post({ type: 'segment', samples: n, timeBase: dec.timeBase, info: dec.info() });
+        let n = 0;
+        let error = null;
+        try {
+          n = dec.pushSegment(new Uint8Array(m.data));
+        } catch (e) {
+          error = String(e?.message ?? e);
+        }
+        const range = dec.lastSegmentRange();
+        post({ type: 'segment', tag: m.tag, samples: n, error, firstPts: range.firstPts, lastPts: range.lastPts, timeBase: dec.timeBase, info: dec.info() });
+        schedule();
+        break;
+      }
+      case 'switchStream': {
+        // Seamless rendition switch — see Decoder.switchStream.
+        let r;
+        try {
+          r = dec.switchStream({ boundaryPts: m.boundaryPts ?? null, init: new Uint8Array(m.init) });
+        } catch (e) {
+          r = { ok: false, dropped: 0, error: String(e?.message ?? e) };
+        }
+        post({ type: 'switched', tag: m.tag, ...r });
         schedule();
         break;
       }

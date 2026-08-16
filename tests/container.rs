@@ -194,3 +194,152 @@ fn cmaf_segments_decode_continuously(threads: u32) {
     assert_eq!(md5_of(&frames), want_md5, "MD5 across segments");
     assert_eq!(dec.width(), Some(320));
 }
+
+/// Decode a whole CMAF rendition (init + every segment) the segment-fed way.
+fn decode_segments(dir: &str, threads: u32) -> Vec<wasm_av1::Frame> {
+    let mut dec = Decoder::new(Config {
+        threads,
+        ..Config::default()
+    })
+    .unwrap();
+    dec.set_init_segment(testdata(&format!("{dir}/init.mp4")))
+        .unwrap();
+    for seg in ["seg0.m4s", "seg1.m4s"] {
+        dec.push_segment(&testdata(&format!("{dir}/{seg}")))
+            .unwrap();
+    }
+    dec.end_of_stream();
+    let mut frames = Vec::new();
+    while !dec.finished() {
+        dec.run().unwrap();
+        while let Some(f) = dec.next_frame() {
+            frames.push(f.clone());
+        }
+    }
+    frames
+}
+
+#[test]
+fn a_rendition_switch_at_a_segment_boundary_is_seamless() {
+    rendition_switch_is_seamless(1);
+}
+
+#[test]
+fn a_rendition_switch_is_seamless_with_worker_threads() {
+    rendition_switch_is_seamless(4);
+}
+
+/// testdata/cmaf (320x180) and testdata/cmaf-lo (160x90) are two rungs of
+/// the same content: same GOP, same 1 s segments, same timescale. Play the
+/// high rung with its whole future already queued, then — as a player does
+/// when the device stutters — replace the not-yet-decoded future from the
+/// next segment boundary with the low rung: truncate the queue there, new
+/// init, other rung's segment. No flush: nothing decoded is lost, pts run
+/// on, and each half is bit-exact with that rung decoded on its own.
+fn rendition_switch_is_seamless(threads: u32) {
+    let hi = decode_segments("cmaf", 1);
+    let lo = decode_segments("cmaf-lo", 1);
+    assert_eq!(hi.len(), 48);
+    assert_eq!(lo.len(), 48);
+
+    let mut dec = Decoder::new(Config {
+        max_buffered: 4,
+        threads,
+        ..Config::default()
+    })
+    .unwrap();
+    dec.set_init_segment(testdata("cmaf/init.mp4")).unwrap();
+    dec.push_segment(&testdata("cmaf/seg0.m4s")).unwrap();
+    // The future is already queued, as a prefetching player would have it.
+    dec.push_segment(&testdata("cmaf/seg1.m4s")).unwrap();
+    assert_eq!(dec.pending_input(), 48);
+
+    // Watch ten frames of the high rung.
+    let mut frames = Vec::new();
+    while frames.len() < 10 {
+        dec.run().unwrap();
+        while let Some(f) = dec.next_frame() {
+            frames.push(f.clone());
+        }
+    }
+
+    // Switch at the seg1 boundary (frame 24: 24 × 512 ticks at 12288/s).
+    let boundary = 24 * 512;
+    assert!(
+        dec.next_queued_pts().unwrap() < boundary,
+        "the decoder must not have reached the boundary yet"
+    );
+    assert!(dec.last_sent_pts().unwrap() < boundary);
+    let dropped = dec.truncate_queued_from(boundary);
+    assert_eq!(dropped, 24, "seg1's samples were un-queued");
+    dec.set_init_segment(testdata("cmaf-lo/init.mp4")).unwrap();
+    assert_eq!(dec.push_segment(&testdata("cmaf-lo/seg1.m4s")).unwrap(), 24);
+    dec.end_of_stream();
+    while !dec.finished() {
+        dec.run().unwrap();
+        while let Some(f) = dec.next_frame() {
+            frames.push(f.clone());
+        }
+    }
+
+    assert_eq!(
+        frames.len(),
+        48,
+        "{threads} threads: every frame of both halves"
+    );
+    assert_eq!(dec.stats().decode_errors, 0);
+    for w in frames.windows(2) {
+        assert_eq!(
+            w[1].pts.unwrap() - w[0].pts.unwrap(),
+            512,
+            "pts run on across the switch"
+        );
+    }
+    assert!(frames[..24]
+        .iter()
+        .all(|f| f.width == 320 && f.height == 180));
+    assert!(frames[24..]
+        .iter()
+        .all(|f| f.width == 160 && f.height == 90));
+    assert_eq!(
+        md5_of(&frames[..24]),
+        md5_of(&hi[..24]),
+        "high rung half is exact"
+    );
+    assert_eq!(
+        md5_of(&frames[24..]),
+        md5_of(&lo[24..]),
+        "low rung half is exact"
+    );
+}
+
+#[test]
+fn truncating_at_a_boundary_the_decoder_passed_drops_nothing_useful() {
+    // The guard a player must apply: once rav1d has been handed a temporal
+    // unit at or beyond the boundary, the boundary is gone — `next_queued_pts`
+    // / `last_sent_pts` say so, and the player picks the next one.
+    let mut dec = Decoder::new(Config::default()).unwrap();
+    dec.set_init_segment(testdata("cmaf/init.mp4")).unwrap();
+    dec.push_segment(&testdata("cmaf/seg0.m4s")).unwrap();
+    dec.push_segment(&testdata("cmaf/seg1.m4s")).unwrap();
+    // Decode well into seg1.
+    let mut n = 0;
+    while n < 30 {
+        dec.run().unwrap();
+        while dec.next_frame().is_some() {
+            n += 1;
+        }
+    }
+    let boundary = 24 * 512;
+    let front = dec.next_queued_pts().unwrap();
+    assert!(
+        front > boundary,
+        "queue front is past the boundary: {front}"
+    );
+    assert!(dec.last_sent_pts().unwrap() >= boundary);
+    // A player that checked would not do this; if it did, it drops seg1's
+    // remaining samples — legal, just a gap it must then refill.
+    let dropped = dec.truncate_queued_from(boundary);
+    assert_eq!(dropped as u64, 48 - dec.stats().temporal_units_in);
+    assert_eq!(dec.pending_input(), 0);
+}

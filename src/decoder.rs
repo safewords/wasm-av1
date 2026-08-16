@@ -213,6 +213,21 @@ pub struct Decoder {
     init_segment: Option<Vec<u8>>,
     #[cfg(feature = "container")]
     segment_time_base: Option<(u32, u32)>,
+    /// The `configOBUs` (sequence header) from the init segment's `av1C`, and
+    /// whether the next pushed sample must be made to carry a sequence header
+    /// — set by [`Decoder::set_init_segment`]. A rendition switch feeds a new
+    /// init + segments without a flush; rav1d then needs the new sequence
+    /// header before that segment's keyframe, and not every encoder repeats
+    /// it in every keyframe sample.
+    #[cfg(feature = "container")]
+    init_config_obus: Option<Vec<u8>>,
+    #[cfg(feature = "container")]
+    ensure_seq_hdr: bool,
+    /// pts of the first and last sample of the segment most recently pushed.
+    #[cfg(feature = "container")]
+    last_segment_pts: Option<(i64, i64)>,
+    /// pts of the last temporal unit handed to rav1d, any source.
+    last_sent_pts: Option<i64>,
     stats: Stats,
 }
 
@@ -259,6 +274,13 @@ impl Decoder {
             init_segment: None,
             #[cfg(feature = "container")]
             segment_time_base: None,
+            #[cfg(feature = "container")]
+            init_config_obus: None,
+            #[cfg(feature = "container")]
+            ensure_seq_hdr: false,
+            #[cfg(feature = "container")]
+            last_segment_pts: None,
+            last_sent_pts: None,
             stats: Stats::default(),
         })
     }
@@ -333,6 +355,8 @@ impl Decoder {
                 ended: false,
             });
         }
+        self.init_config_obus = av1c_config_obus(&init);
+        self.ensure_seq_hdr = true;
         self.init_segment = Some(init);
         self.segment_time_base = None;
         Ok(())
@@ -371,10 +395,27 @@ impl Decoder {
             self.segment_time_base = Some((1, header.timescale));
         }
         let mut n = 0;
+        let mut first_last: Option<(i64, i64)> = None;
         loop {
             match demuxer.next_video_sample() {
                 Ok(Some(s)) => {
-                    self.push_temporal_unit(s.data, s.pts_ticks)?;
+                    first_last = Some(match first_last {
+                        None => (s.pts_ticks, s.pts_ticks),
+                        Some((f, l)) => (f.min(s.pts_ticks), l.max(s.pts_ticks)),
+                    });
+                    let mut data = s.data;
+                    if self.ensure_seq_hdr {
+                        self.ensure_seq_hdr = false;
+                        if !tu_has_sequence_header(&data) {
+                            if let Some(cfg) = &self.init_config_obus {
+                                let mut with = Vec::with_capacity(cfg.len() + data.len());
+                                with.extend_from_slice(cfg);
+                                with.extend_from_slice(&data);
+                                data = with;
+                            }
+                        }
+                    }
+                    self.push_temporal_unit(data, s.pts_ticks)?;
                     n += 1;
                 }
                 Ok(None) => break,
@@ -384,7 +425,16 @@ impl Decoder {
                 }
             }
         }
+        self.last_segment_pts = first_last;
         Ok(n)
+    }
+
+    /// pts of the first and last sample of the segment most recently pushed
+    /// with [`Decoder::push_segment`] (a segment boundary, exactly, for
+    /// [`Decoder::truncate_queued_from`]).
+    #[cfg(feature = "container")]
+    pub fn last_segment_pts(&self) -> Option<(i64, i64)> {
+        self.last_segment_pts
     }
 
     /// The container's stream info, if the source is a container.
@@ -449,6 +499,42 @@ impl Decoder {
         }
     }
 
+    /// Push mode: pts of the next queued temporal unit (the one rav1d gets
+    /// next), if any is queued.
+    pub fn next_queued_pts(&self) -> Option<i64> {
+        match &self.source {
+            Some(Source::Push { queue, .. }) => queue.front().map(|p| p.pts),
+            _ => None,
+        }
+    }
+
+    /// pts of the last temporal unit handed to rav1d, if any.
+    pub fn last_sent_pts(&self) -> Option<i64> {
+        self.last_sent_pts
+    }
+
+    /// Push mode: drop the queued (not yet decoded) temporal units whose pts
+    /// is `>= pts`, keeping everything before. Returns how many were dropped.
+    ///
+    /// This is how a rendition switch stays seamless: the future the decoder
+    /// has not reached is replaced — a new init segment and the other
+    /// rendition's segments from a segment boundary at `pts` — with no flush,
+    /// so nothing already decoded is lost and there is no gap on screen. The
+    /// caller must make sure rav1d has not gone past `pts`
+    /// ([`Decoder::next_queued_pts`] / [`Decoder::last_sent_pts`]) and that
+    /// what it pushes next starts on a keyframe (every CMAF segment does).
+    pub fn truncate_queued_from(&mut self, pts: i64) -> usize {
+        match &mut self.source {
+            Some(Source::Push { queue, ended }) => {
+                let before = queue.len();
+                queue.retain(|p| p.pts < pts);
+                *ended = false;
+                before - queue.len()
+            }
+            _ => 0,
+        }
+    }
+
     /// Drop everything decoded or queued and reset rav1d, e.g. for a seek.
     /// The IVF source, if any, rewinds to its first frame; a container source
     /// is forward-only in rivet and is dropped (set it again to replay).
@@ -482,6 +568,12 @@ impl Decoder {
         self.drained = true;
         self.input_pending = false;
         self.needs_drain = false;
+        self.last_sent_pts = None;
+        #[cfg(feature = "container")]
+        {
+            // After a flush rav1d has forgotten the sequence header too.
+            self.ensure_seq_hdr = true;
+        }
         Ok(())
     }
 
@@ -620,6 +712,7 @@ impl Decoder {
         self.stats.bytes_in += data.len() as u64;
         self.drained = false;
         self.needs_drain = true;
+        self.last_sent_pts = Some(pts);
         match self
             .inner
             .send_data(data.into_boxed_slice(), None, Some(pts), None)
@@ -719,6 +812,100 @@ impl Decoder {
                 other => return Ok(other),
             }
         }
+    }
+}
+
+/// The `configOBUs` of the `av1C` box in an AV1 ISOBMFF init segment: the
+/// bytes after the 4-byte AV1CodecConfigurationRecord header, i.e. the OBU
+/// sequence header (and any metadata OBUs) the sample entry advertises.
+#[cfg(feature = "container")]
+fn av1c_config_obus(init: &[u8]) -> Option<Vec<u8>> {
+    // Boxes are [size:4][type:4]…; find the av1C box by walking is more than
+    // needed — the fourcc is unique enough in an init segment to scan for.
+    let pos = init.windows(4).position(|w| w == b"av1C")?;
+    if pos < 4 {
+        return None;
+    }
+    let size =
+        u32::from_be_bytes([init[pos - 4], init[pos - 3], init[pos - 2], init[pos - 1]]) as usize;
+    let body_start = pos + 4;
+    let box_end = (pos - 4).checked_add(size)?.min(init.len());
+    // AV1CodecConfigurationRecord: marker/version, profile/level, flags, delay.
+    let obus_start = body_start + 4;
+    if size < 12 || obus_start > box_end {
+        return None;
+    }
+    let obus = &init[obus_start..box_end];
+    (!obus.is_empty()).then(|| obus.to_vec())
+}
+
+/// True when the temporal unit contains an OBU_SEQUENCE_HEADER (type 1).
+#[cfg(feature = "container")]
+fn tu_has_sequence_header(tu: &[u8]) -> bool {
+    let mut i = 0;
+    while i < tu.len() {
+        let hdr = tu[i];
+        if hdr & 0x80 != 0 {
+            return false; // forbidden bit: not an OBU stream we understand
+        }
+        let obu_type = (hdr >> 3) & 0x0f;
+        let has_ext = hdr & 0x04 != 0;
+        let has_size = hdr & 0x02 != 0;
+        i += 1 + usize::from(has_ext);
+        if !has_size {
+            // Size-less OBU: it runs to the end of the TU.
+            return obu_type == 1;
+        }
+        // leb128
+        let mut size: usize = 0;
+        let mut shift = 0;
+        loop {
+            let Some(&b) = tu.get(i) else { return false };
+            i += 1;
+            size |= usize::from(b & 0x7f) << shift;
+            if b & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+            if shift > 56 {
+                return false;
+            }
+        }
+        if obu_type == 1 {
+            return true;
+        }
+        i = i.saturating_add(size);
+    }
+    false
+}
+
+#[cfg(all(test, feature = "container"))]
+mod obu_tests {
+    use super::*;
+
+    #[test]
+    fn sequence_header_detection_walks_obus() {
+        // temporal delimiter (type 2, size 0) then a sequence header (type 1, size 3)
+        assert!(tu_has_sequence_header(&[0x12, 0x00, 0x0a, 0x03, 0, 0, 0]));
+        // temporal delimiter then a frame OBU (type 6)
+        assert!(!tu_has_sequence_header(&[0x12, 0x00, 0x32, 0x02, 0, 0]));
+        // size-less trailing sequence header
+        assert!(tu_has_sequence_header(&[0x12, 0x00, 0x08, 0, 0]));
+        assert!(!tu_has_sequence_header(&[]));
+        assert!(!tu_has_sequence_header(&[0x80]));
+    }
+
+    #[test]
+    fn av1c_config_obus_come_out_of_an_init_segment() {
+        let init = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/testdata/cmaf/init.mp4"
+        ))
+        .unwrap();
+        let obus = av1c_config_obus(&init).expect("av1C with configOBUs");
+        // …and they are a sequence header OBU.
+        assert!(tu_has_sequence_header(&obus));
+        assert!(av1c_config_obus(b"no boxes here").is_none());
     }
 }
 

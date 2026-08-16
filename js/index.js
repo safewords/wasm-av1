@@ -17,4 +17,4 @@ export { Decoder, Frame, Run, Layout, Matrix, krKbFor, sniff } from './decoder.j
 export { WebGLRenderer, Canvas2DRenderer, createRenderer } from './render.js';
 export { WorkerDecoder } from './worker-client.js';
 export { Av1Player, resolveThreads } from './player.js';
-export { HlsAv1Video, parseMaster, parseMediaPlaylist, isAv1Codecs } from './hls.js';
+export { HlsAv1Video, BandwidthEstimator, parseMaster, parseMediaPlaylist, isAv1Codecs } from './hls.js';

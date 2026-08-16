@@ -76,14 +76,28 @@ const hlsHarness = (opts) => `
   const v = new HlsAv1Video(canvas, { ...${JSON.stringify(opts)}, clock });
   const errors = [];
   v.onerror = (e) => errors.push(String(e.message || e));
-  const master = null;
-  await v.selectVariant('${base}/testdata/cmaf/index.m3u8');
+  const master = await v.loadMaster('${base}/testdata/cmaf/master.m3u8');
+  const hi = master.variants.find((x) => x.height === 180);
+  const lo = master.variants.find((x) => x.height === 90);
+  await v.selectVariant(${JSON.stringify(opts.switchAt || null)} ? hi : hi.url);
   const ended = new Promise((res) => { v.player.onstate = (s) => { if (s === 'ended') res(); }; });
   t0 = performance.now();
   v.start();
+  let switched = null;
+  const switchAt = ${JSON.stringify(opts.switchAt || null)};
+  if (switchAt) {
+    // A rung switch mid-play: down to 160x90 — seamlessly at the next segment
+    // boundary (frames keep flowing, the picture changes rung a segment on)
+    // or hard (flush + refill from the clock).
+    // Early: the in-thread decoder runs ~16 frames ahead of the clock and the
+    // clip is 2 s of 1 s segments, so the only boundary (1 s) is gone by ~0.35 s.
+    await new Promise((r) => setTimeout(r, 120));
+    switched = await v.selectVariant(lo, { at: switchAt });
+  }
   await Promise.race([ended, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000))]);
   const wall = performance.now() - t0;
   v.stop();
+  window.__switch = { switched, variantHeight: v.stats.variantHeight, canvasW: canvas.width, canvasH: canvas.height, bandwidth: v.stats.bandwidth, fetches: v.stats.fetches, stalls: v.stats.stalls, late: v.stats.lateFrames };
   const probe = document.createElement('canvas'); probe.width = canvas.width; probe.height = canvas.height;
   probe.getContext('2d').drawImage(canvas, 0, 0);
   const px = probe.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
@@ -101,6 +115,11 @@ combos.push({ variant: 'simd', renderer: 'webgl', worker: true, file: 'testsrc-3
 combos.push({ variant: 'baseline', renderer: '2d', worker: true, file: 'testsrc-320x180-8bit.webm' });
 combos.push({ variant: 'simd', renderer: 'webgl', worker: false, hls: true });
 combos.push({ variant: 'simd', renderer: 'webgl', worker: true, hls: true });
+// Rung switches through HlsAv1Video on the two-rung master (320x180 → 160x90):
+// seamless at a segment boundary, in-thread and in a Worker; and the hard way.
+combos.push({ variant: 'simd', renderer: 'webgl', worker: true, hls: true, switchAt: 'boundary' });
+combos.push({ variant: 'simd', renderer: 'webgl', worker: false, hls: true, switchAt: 'boundary' });
+combos.push({ variant: 'simd', renderer: '2d', worker: true, hls: true, switchAt: 'now' });
 // Threads: rav1d's worker threads as Web Workers on shared memory. Only in a
 // Worker (rav1d blocks its caller), on the isolated page the server makes.
 combos.push({ variant: 'simd-threads', renderer: 'webgl', worker: true, threads: 4 });
@@ -110,9 +129,13 @@ combos.push({ variant: 'simd-threads', renderer: 'webgl', worker: true, threads:
 // 'auto' with threads on an isolated page picks a threads variant.
 combos.push({ variant: 'auto', expectVariant: 'simd-threads', renderer: 'webgl', worker: true, threads: 'auto' });
 
+// `node test/browser.mjs --only <substring>` runs the combos whose label contains it (and browsers: --browsers chromium).
+const argOnly = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
+const argBrowsers = process.argv.includes('--browsers') ? process.argv[process.argv.indexOf('--browsers') + 1].split(',') : null;
 mkdirSync(join(root, 'test', 'out'), { recursive: true });
 let failures = 0;
 for (const [name, launcher] of [['chromium', chromium], ['firefox', firefox], ['webkit', webkit]]) {
+  if (argBrowsers && !argBrowsers.includes(name)) continue;
   let browser;
   try {
     browser = await launcher.launch({ args: name === 'chromium' ? ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] : [] });
@@ -126,13 +149,14 @@ for (const [name, launcher] of [['chromium', chromium], ['firefox', firefox], ['
     page.on('pageerror', (e) => consoleErrors.push(String(e)));
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     await page.goto(`${base}/demo/`);
-    const label = `${name} ${combo.variant} ${combo.renderer} ${combo.worker ? 'worker' : 'main'}${combo.threads ? ' t' + combo.threads : ''}${combo.file ? ' ' + combo.file.split('.').pop() : ''}${combo.hls ? ' hls-cmaf' : ''}`;
-    const playerOpts = { variant: combo.variant, renderer: combo.renderer, worker: combo.worker, ...(combo.threads ? { threads: combo.threads } : {}) };
+    const label = `${name} ${combo.variant} ${combo.renderer} ${combo.worker ? 'worker' : 'main'}${combo.threads ? ' t' + combo.threads : ''}${combo.file ? ' ' + combo.file.split('.').pop() : ''}${combo.hls ? ' hls-cmaf' : ''}${combo.switchAt ? ' switch@' + combo.switchAt : ''}`;
+    const playerOpts = { variant: combo.variant, renderer: combo.renderer, worker: combo.worker, ...(combo.threads ? { threads: combo.threads } : {}), ...(combo.switchAt ? { switchAt: combo.switchAt } : {}) };
+    if (argOnly && !label.includes(argOnly)) { await page.close(); continue; }
     try {
       await page.evaluate((src) => new Promise((res, rej) => {
         const s = document.createElement('script'); s.type = 'module';
         s.textContent = `import { Av1Player, HlsAv1Video } from '${location.origin}/js/index.js';
-try { ${src}; window.__done = true; } catch (e) { window.__err = String(e && e.stack || e); }`;
+try { ${src}; window.__done = true; } catch (e) { window.__err = String(e && e.message || e) + ' | ' + String(e && e.stack || '').split(String.fromCharCode(10)).slice(0, 3).join(' <- '); }`;
         document.body.appendChild(s);
         const deadline = Date.now() + 40000;
         const t = setInterval(() => {
@@ -142,15 +166,21 @@ try { ${src}; window.__done = true; } catch (e) { window.__err = String(e && e.s
         }, 20);
       }), combo.hls ? hlsHarness(playerOpts) : harness({ ...playerOpts, ...(combo.file ? { file: combo.file } : {}) }));
       const r = await page.evaluate(() => window.__result);
+      const sw = combo.switchAt ? await page.evaluate(() => window.__switch) : null;
       const st = r.stats;
-      const okFrames = st.framesShown + st.framesDropped === 48;
+      // A boundary switch keeps every frame; a hard switch re-decodes from
+      // the clock's segment start, so frames before the clock are dropped
+      // (not shown) — the total is still 48 as pts run on.
+      // (a hard switch zeroes the player's counters at the switch, so only what came after counts there)
+      const okFrames = combo.switchAt === 'now' ? st.framesShown >= 20 && st.framesShown <= 48 : st.framesShown + st.framesDropped === 48;
+      const okSwitch = !sw || (sw.switched === combo.switchAt && sw.variantHeight === 90 && sw.canvasW === 160 && sw.canvasH === 90 && sw.bandwidth > 0 && sw.fetches >= 2);
       const okDraw = r.nonBlackFraction > 0.5;
       const okInfo = combo.hls || combo.file?.endsWith('webm') ? true : (r.info.frameCount === 48 || r.info.frameCount === null);
       const wantThreads = combo.threads === 'auto' ? 2 : (combo.threads ?? 1);
       const okThreads = combo.threads ? st.threads >= wantThreads : st.threads === 1;
-      const ok = okFrames && okDraw && okInfo && okThreads && r.errors.length === 0 && consoleErrors.length === 0 && st.variant === (combo.expectVariant ?? combo.variant) && r.rendererKind === combo.renderer;
+      const ok = okFrames && okDraw && okInfo && okThreads && okSwitch && r.errors.length === 0 && consoleErrors.length === 0 && st.variant === (combo.expectVariant ?? combo.variant) && r.rendererKind === combo.renderer;
       if (!ok) failures++;
-      console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(42)} threads ${st.threads} shown ${st.framesShown} dropped ${st.framesDropped} draw ${(st.drawMs / Math.max(1, st.framesShown)).toFixed(2)}ms ${st.worker ? '' : `decode ${(st.decodeMs / 48).toFixed(2)}ms`} path ${st.drawPath} wall ${r.wall.toFixed(0)}ms nonblack ${(r.nonBlackFraction * 100).toFixed(0)}%${r.errors.length ? ' errors: ' + r.errors.join('; ') : ''}${consoleErrors.length ? ' console: ' + consoleErrors.join('; ') : ''}`);
+      console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(42)} threads ${st.threads} shown ${st.framesShown} dropped ${st.framesDropped}${sw ? ` switch ${sw.switched}→${sw.variantHeight}p canvas ${sw.canvasW}x${sw.canvasH} bw ${(sw.bandwidth / 1e6).toFixed(1)}Mb/s stalls ${sw.stalls} late ${sw.late}` : ''} draw ${(st.drawMs / Math.max(1, st.framesShown)).toFixed(2)}ms ${st.worker ? '' : `decode ${(st.decodeMs / 48).toFixed(2)}ms`} path ${st.drawPath} wall ${r.wall.toFixed(0)}ms nonblack ${(r.nonBlackFraction * 100).toFixed(0)}%${r.errors.length ? ' errors: ' + r.errors.join('; ') : ''}${consoleErrors.length ? ' console: ' + consoleErrors.join('; ') : ''}`);
       writeFileSync(join(root, 'test', 'out', `${label.replace(/ /g, '-')}.png`), Buffer.from(r.png.split(',')[1], 'base64'));
     } catch (e) {
       failures++;

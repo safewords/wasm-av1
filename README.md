@@ -60,11 +60,14 @@ frame.rgba();                             // or RGBA8 (SIMD128 in the SIMD build
 ```
 
 Higher up, `Av1Player` (canvas, pacing by pts or by an external clock,
-decode budget per animation frame, in-thread or in a Worker), the renderers —
-WebGL uploads the planes and does YUV→RGB in the shader; 2D uses the wasm
-RGBA conversion — and `HlsAv1Video`: HLS master/media playlists → CMAF init +
-segments (demuxed by rivet inside the wasm, no decoder reset between
-segments) → canvas, clocked by a `<video>` that plays the audio rendition.
+decode budget per animation frame, in-thread or in a Worker, stutter stats:
+late frames and stalls), the renderers — WebGL uploads the planes and does
+YUV→RGB in the shader; 2D uses the wasm RGBA conversion — and `HlsAv1Video`:
+HLS master/media playlists → CMAF init + segments (demuxed by rivet inside
+the wasm, no decoder reset between segments) → canvas, clocked by a `<video>`
+that plays the audio rendition, with a bandwidth estimate from its own
+downloads and rung switches that take effect at the next segment boundary
+without a gap.
 That last one is the shape a site with an existing HLS player needs — see
 [docs/integration.md](docs/integration.md) for the decision, the pipeline,
 rung selection, threads/isolation headers and serving. The demo page

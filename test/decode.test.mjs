@@ -273,3 +273,80 @@ test('segment-fed: CMAF init + media segments pushed one at a time (rivet demux,
   assert.equal(md5.digest('hex'), ref.md5);
   dec.free();
 });
+
+test('seamless rung switch through the JS Decoder: truncate at a boundary, new init, other rung', async () => {
+  const m = await load('simd');
+  const { Decoder } = await import('../js/decoder.js');
+  const rt = { mod: m.mod, wasm: m.wasm, variant: 'simd', simd: true, threads: false, version: m.mod.version() };
+  const read = (rel) => readFileSync(path.join(testdata, rel));
+  // Reference: each rung on its own.
+  const whole = (dir) => {
+    const d = new Decoder(rt, { maxBuffered: 8 });
+    d.setInitSegment(read(`${dir}/init.mp4`));
+    d.pushSegment(read(`${dir}/seg0.m4s`));
+    d.pushSegment(read(`${dir}/seg1.m4s`));
+    d.endOfStream();
+    const out = [];
+    while (!d.finished) { d.run(); let f; while ((f = d.nextFrame())) out.push({ pts: f.pts, w: f.width, h: f.height, md5: createHash('md5').update(f.data).digest('hex') }); }
+    d.free();
+    return out;
+  };
+  const hi = whole('cmaf');
+  const lo = whole('cmaf-lo');
+  assert.equal(hi.length, 48);
+  assert.equal(lo.length, 48);
+
+  const dec = new Decoder(rt, { maxBuffered: 4 });
+  dec.setInitSegment(read('cmaf/init.mp4'));
+  assert.equal(dec.pushSegment(read('cmaf/seg0.m4s')), 24);
+  assert.equal(dec.pushSegment(read('cmaf/seg1.m4s')), 24);
+  const range = dec.lastSegmentRange();
+  assert.equal(range.firstPts, 24 * 512, 'the boundary, exactly');
+  assert.equal(range.lastPts, 47 * 512);
+  const got = [];
+  const drain = () => { let f; while ((f = dec.nextFrame())) got.push({ pts: f.pts, w: f.width, h: f.height, md5: createHash('md5').update(f.data).digest('hex') }); };
+  while (got.length < 8) { dec.run(); drain(); }
+  // The decoder has not reached the boundary: switch there.
+  const r = dec.switchStream({ boundaryPts: range.firstPts, init: read('cmaf-lo/init.mp4') });
+  assert.equal(r.ok, true);
+  assert.equal(r.dropped, 24);
+  assert.equal(dec.pushSegment(read('cmaf-lo/seg1.m4s')), 24);
+  dec.endOfStream();
+  while (!dec.finished) { dec.run(); drain(); }
+  assert.equal(got.length, 48);
+  for (let i = 1; i < got.length; i++) assert.equal(got[i].pts - got[i - 1].pts, 512, 'pts run on');
+  assert.deepEqual(got.slice(0, 24).map((f) => [f.w, f.h, f.md5]), hi.slice(0, 24).map((f) => [f.w, f.h, f.md5]), 'high half exact');
+  assert.deepEqual(got.slice(24).map((f) => [f.w, f.h, f.md5]), lo.slice(24).map((f) => [f.w, f.h, f.md5]), 'low half exact');
+  // Too late is reported, not done.
+  const late = new Decoder(rt, { maxBuffered: 4 });
+  late.setInitSegment(read('cmaf/init.mp4'));
+  late.pushSegment(read('cmaf/seg0.m4s'));
+  late.pushSegment(read('cmaf/seg1.m4s'));
+  let n = 0;
+  while (n < 30) { late.run(); while (late.nextFrame()) n++; }
+  const r2 = late.switchStream({ boundaryPts: 24 * 512, init: read('cmaf-lo/init.mp4') });
+  assert.equal(r2.ok, false);
+  assert.ok(r2.front > 24 * 512);
+  late.free();
+  dec.free();
+});
+
+test('BandwidthEstimator: two EWMAs, the estimate is the lower (a slow-down is believed at once)', async () => {
+  const { BandwidthEstimator } = await import('../js/hls.js');
+  const b = new BandwidthEstimator();
+  assert.equal(b.estimate, 0);
+  // Ten 1 s downloads of 1 MB: 8 Mb/s.
+  for (let i = 0; i < 10; i++) b.sample(1, 1_000_000);
+  assert.ok(Math.abs(b.estimate - 8e6) / 8e6 < 0.01, `steady: ${b.estimate}`);
+  // Then a 4 s download of 1 MB (2 Mb/s): the fast average drops well below 8, the estimate follows it.
+  b.sample(4, 1_000_000);
+  assert.ok(b.estimate < 5e6, `slow-down believed: ${b.estimate}`);
+  // A burst (1 MB in 0.1 s = 80 Mb/s) does not swing it back up as far as the burst says.
+  b.sample(0.1, 1_000_000);
+  assert.ok(b.estimate < 20e6, `burst not believed: ${b.estimate}`);
+  // Trivial samples are ignored.
+  const c = new BandwidthEstimator({ defaultEstimate: 123 });
+  c.sample(0, 100);
+  c.sample(1, 0);
+  assert.equal(c.estimate, 123);
+});

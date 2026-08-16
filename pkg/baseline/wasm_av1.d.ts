@@ -70,6 +70,18 @@ export class Av1Decoder {
     hasFrame(): boolean;
     height(): number;
     /**
+     * pts of the first sample of the segment most recently pushed, or NaN.
+     */
+    lastSegmentFirstPts(): number;
+    /**
+     * pts of the last sample of the segment most recently pushed, or NaN.
+     */
+    lastSegmentLastPts(): number;
+    /**
+     * pts of the last temporal unit handed to the decoder, or NaN.
+     */
+    lastSentPts(): number;
+    /**
      * `maxBuffered` frames kept ahead (default 10, upstream's
      * `NUM_FRAMES_BUFFERED`); `applyGrain` toggles film-grain synthesis
      * (default true); `threads` rav1d worker threads (default 1; more only
@@ -81,6 +93,10 @@ export class Av1Decoder {
      * Make the oldest buffered frame current; false if none is buffered.
      */
     nextFrame(): boolean;
+    /**
+     * pts of the next queued temporal unit (push mode), or NaN.
+     */
+    nextQueuedPts(): number;
     /**
      * pts of the oldest buffered frame (the one `nextFrame` would return),
      * without popping it; NaN if none is buffered or it has no pts.
@@ -151,6 +167,13 @@ export class Av1Decoder {
      * your own units).
      */
     timeBaseNum(): number;
+    /**
+     * Push mode: drop the queued, not-yet-decoded temporal units with
+     * `pts >= pts` (a rendition switch replaces the future from a segment
+     * boundary the decoder has not reached — no flush, no gap). Returns how
+     * many were dropped. See `Decoder::truncate_queued_from`.
+     */
+    truncateQueuedFrom(pts: number): number;
     /**
      * Stream width: the IVF header's, else the last decoded frame's; 0 if unknown yet.
      */
@@ -239,8 +262,12 @@ export interface InitOutput {
     readonly av1decoder_framesBuffered: (a: number) => number;
     readonly av1decoder_hasFrame: (a: number) => number;
     readonly av1decoder_height: (a: number) => number;
+    readonly av1decoder_lastSegmentFirstPts: (a: number) => number;
+    readonly av1decoder_lastSegmentLastPts: (a: number) => number;
+    readonly av1decoder_lastSentPts: (a: number) => number;
     readonly av1decoder_new: (a: number, b: number, c: number) => [number, number, number];
     readonly av1decoder_nextFrame: (a: number) => number;
+    readonly av1decoder_nextQueuedPts: (a: number) => number;
     readonly av1decoder_peekPts: (a: number) => number;
     readonly av1decoder_pendingInput: (a: number) => number;
     readonly av1decoder_planeHeight: (a: number, b: number) => number;
@@ -260,6 +287,7 @@ export interface InitOutput {
     readonly av1decoder_threads: (a: number) => number;
     readonly av1decoder_timeBaseDen: (a: number) => number;
     readonly av1decoder_timeBaseNum: (a: number) => number;
+    readonly av1decoder_truncateQueuedFrom: (a: number, b: number) => number;
     readonly av1decoder_width: (a: number) => number;
     readonly containerSupport: () => number;
     readonly simdEnabled: () => number;

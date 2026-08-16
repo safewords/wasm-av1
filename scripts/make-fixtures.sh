@@ -78,3 +78,24 @@ rm -rf testdata/cmaf && mkdir -p testdata/cmaf
 ffmpeg -hide_banner -loglevel error -y -i "$src" -c:v copy -f hls -hls_segment_type fmp4 -hls_time 1 \
   -hls_playlist_type vod -hls_fmp4_init_filename init.mp4 -hls_segment_filename testdata/cmaf/seg%d.m4s testdata/cmaf/index.m3u8
 ls testdata/cmaf
+
+# A second rendition of the same content — 160x90, same GOP (-g 12) and the
+# same 1 s segmentation, as a ladder rung is — for the seamless rendition
+# switch (truncate the queued future at a segment boundary, new init, other
+# rung's segments). Frames 0..23 must equal the 320x180 decode, 24..47 the
+# 160x90 one.
+rm -rf testdata/cmaf-lo && mkdir -p testdata/cmaf-lo
+ffmpeg -hide_banner -loglevel error -y   -f lavfi -i "testsrc2=size=160x90:rate=24" -frames:v 48   -vf "format=yuv420p" -s 160x90 -c:v libaom-av1 -cpu-used 6 -crf 36 -g 12 -row-mt 0 -threads 1   -f hls -hls_segment_type fmp4 -hls_time 1 -hls_playlist_type vod   -hls_fmp4_init_filename init.mp4 -hls_segment_filename testdata/cmaf-lo/seg%d.m4s testdata/cmaf-lo/index.m3u8
+ls testdata/cmaf-lo
+
+# A two-rung master playlist over the two, for HlsAv1Video's rung switching
+# (BANDWIDTH from the segment sizes, roughly).
+cat > testdata/cmaf/master.m3u8 <<'EOF'
+#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXT-X-STREAM-INF:BANDWIDTH=200000,AVERAGE-BANDWIDTH=180000,RESOLUTION=160x90,CODECS="av01.0.00M.08",FRAME-RATE=24.000
+../cmaf-lo/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=600000,AVERAGE-BANDWIDTH=520000,RESOLUTION=320x180,CODECS="av01.0.00M.08",FRAME-RATE=24.000
+index.m3u8
+EOF

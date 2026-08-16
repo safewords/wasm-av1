@@ -217,6 +217,52 @@ export class Decoder {
     return n;
   }
 
+  /** pts of the first and last sample of the segment most recently pushed — a segment boundary, exactly. */
+  lastSegmentRange() {
+    const firstPts = this.raw.lastSegmentFirstPts();
+    const lastPts = this.raw.lastSegmentLastPts();
+    return { firstPts: Number.isNaN(firstPts) ? null : firstPts, lastPts: Number.isNaN(lastPts) ? null : lastPts };
+  }
+
+  /** Push mode: pts of the next queued (not yet decoded) temporal unit, or null. */
+  nextQueuedPts() {
+    const p = this.raw.nextQueuedPts();
+    return Number.isNaN(p) ? null : p;
+  }
+
+  /** pts of the last temporal unit handed to the decoder, or null. */
+  lastSentPts() {
+    const p = this.raw.lastSentPts();
+    return Number.isNaN(p) ? null : p;
+  }
+
+  /** Push mode: drop queued, not-yet-decoded temporal units with pts ≥ `pts`. Returns how many. */
+  truncateQueuedFrom(pts) {
+    return this.raw.truncateQueuedFrom(pts);
+  }
+
+  /**
+   * Seamless rendition switch: replace the not-yet-decoded future from a
+   * segment boundary. If the decoder has not been handed anything at or past
+   * `boundaryPts` (null = nothing beyond the boundary was pushed yet), the
+   * queue is truncated there, `init` becomes the init segment for what is
+   * pushed next (the other rendition's segments from that boundary), and
+   * decoding continues without a flush — no gap. Returns `{ok, dropped}`;
+   * `ok: false` means the boundary is already behind the decoder: pick the
+   * next one. `HlsAv1Video.selectVariant()` drives this.
+   */
+  switchStream({ boundaryPts = null, init }) {
+    if (boundaryPts != null) {
+      const front = this.nextQueuedPts();
+      const last = this.lastSentPts();
+      const passed = front != null ? front > boundaryPts : (last != null && last >= boundaryPts);
+      if (passed) return { ok: false, dropped: 0, front, last };
+    }
+    const dropped = boundaryPts != null ? this.truncateQueuedFrom(boundaryPts) : 0;
+    this.setInitSegment(init);
+    return { ok: true, dropped };
+  }
+
   /** Push mode: how to turn pts into seconds (e.g. `1 / track.timescale`). */
   setTimeBase(secondsPerTick) {
     this.timeBase = secondsPerTick;

@@ -58,7 +58,7 @@ Releases (`v*` tags → `.github/workflows/release.yml`) publish public,
 unauthenticated artefacts on the GitHub Release:
 
 ```json
-"@safewords/wasm-av1": "https://github.com/safewords/wasm-av1/releases/download/v0.1.0/safewords-wasm-av1-0.1.0.tgz"
+"@safewords/wasm-av1": "https://github.com/safewords/wasm-av1/releases/download/v0.1.3/safewords-wasm-av1-0.1.3.tgz"
 ```
 
 That tarball is `npm pack` of this package (`js/` + `pkg/`), so
@@ -68,7 +68,7 @@ pass `baseUrl` to `loadWasmAv1`/`Av1Player`/`HlsAv1Video`). For the Worker,
 either let your bundler pick up `new Worker(new URL('./worker.js', import.meta.url))`
 or — more predictably — serve `js/` statically too and pass
 `workerUrl: '<baseUrl>js/worker.js'` (its imports are relative). `wasm-av1-pkg-<ver>.zip`
-is `pkg/` alone for non-npm consumers. `github:safewords/wasm-av1#v0.1.0`
+is `pkg/` alone for non-npm consumers. `github:safewords/wasm-av1#v0.1.3`
 works too (the repo is public and `pkg/` is committed).
 
 ## Building

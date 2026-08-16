@@ -55,18 +55,20 @@ v.start();
 video.addEventListener('seeking', () => v.seek(video.currentTime));
 ```
 
-```
-master.m3u8 ──parseMaster──▶ variants (av01, sorted by bandwidth) + audio group
-   audio rendition ──▶ hls.js on the <video>  (the clock and the transport; controls untouched)
-   video rendition ──parseMediaPlaylist──▶ init.mp4 + seg-N.m4s
-        init  ──▶ decoder.setInitSegment(init)
-        seg-N ──▶ decoder.pushSegment(seg)      rivet demuxes init‖seg in wasm, samples queued as temporal units
-                  decoder.run() … nextFrame()   frames with pts in the track timescale
-   HlsAv1Video: prefetch `prefetchSeconds` ahead of `clock()`, show the frame due at video.currentTime,
-                drop late ones, seek() = flush + refill from the segment holding the target
-   render: WebGLRenderer on the <canvas> (YUV in the shader); Canvas2DRenderer fallback
-   thread: WorkerDecoder — decode + demux off the main thread, planes transferred per frame;
-           threads: rav1d's frame/tile threads as Workers on shared memory
+```mermaid
+flowchart TD
+    M[master.m3u8] -->|parseMaster| V[variants: av01, sorted by bandwidth]
+    M -->|parseMaster| A[audio group]
+    A --> H["hls.js on the &lt;video&gt;<br/>the clock and the transport; controls untouched"]
+    V -->|parseMediaPlaylist| P[init.mp4 + seg-N.m4s]
+    P -->|"setInitSegment(init) · pushSegment(seg)"| W
+    subgraph W["WorkerDecoder — off the main thread"]
+        D["rivet demuxes init‖seg in wasm<br/>samples queued as temporal units"] --> R["rav1d: run() … nextFrame()<br/>frames with pts in the track timescale"]
+        R -.->|threads: 'auto'| T["rav1d frame/tile threads<br/>as Workers on shared memory"]
+    end
+    W -->|planes transferred per frame| HV["HlsAv1Video<br/>prefetch prefetchSeconds ahead of clock(),<br/>show the frame due at video.currentTime, drop late ones,<br/>seek() = flush + refill from the segment holding the target"]
+    H -->|"clock: () => video.currentTime"| HV
+    HV --> G["WebGLRenderer on the &lt;canvas&gt; (YUV in the shader)<br/>Canvas2DRenderer fallback"]
 ```
 
 Every CMAF segment starts on a keyframe, so a seek lands on the segment

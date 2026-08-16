@@ -14,16 +14,19 @@ fallback rung in another codec.
 
 **Nothing upstream is vendored.** rav1d and rivet-container are git
 dependencies (`Cargo.lock` pins the revisions); upstream wasm-av1 checked all
-of libaom into `third_party/`. Two small patches are needed on our side and
-live as branches meant to go upstream — see [docs/rav1d.md](docs/rav1d.md)
-and [docs/rivet.md](docs/rivet.md).
+of libaom into `third_party/`. rav1d comes from `safewords/rav1d` `main`
+(upstream + libc-free build, a panic fix, and the wasm SIMD128 kernels — see
+[docs/rav1d.md](docs/rav1d.md)); rivet-container from rivet `develop`
+([docs/rivet.md](docs/rivet.md)). `pkg/` — the built `.wasm` + glue — is
+committed so a git dependency (`github:safewords/wasm-av1#sha`) carries it;
+`scripts/build.sh` regenerates it.
 
 ## What you get
 
 ```
 pkg/baseline/wasm_av1_bg.wasm   post-MVP wasm            1.69 MB (604 KB gzip)   Chrome 96 / Firefox 89 / Safari 15
-pkg/simd/wasm_av1_bg.wasm       + simd128                1.78 MB (631 KB gzip)   Chrome 91 / Firefox 89 / Safari 16.4
-js/                             ESM wrapper: loader + feature detection, Decoder, WebGL/2D renderers, Worker, Av1Player
+pkg/simd/wasm_av1_bg.wasm       + simd128 kernels        1.79 MB (634 KB gzip)   Chrome 91 / Firefox 89 / Safari 16.4
+js/                             ESM wrapper: loader + feature detection, Decoder, WebGL/2D renderers, Worker, Av1Player, HlsAv1Video
 ```
 
 (Without the `container` feature: 1.09 MB / 384 KB gzip and 1.19 MB / 413 KB.)
@@ -33,16 +36,21 @@ import { loadWasmAv1, Decoder } from '@safewords/wasm-av1';
 
 const rt  = await loadWasmAv1();          // picks simd or baseline for this browser
 const dec = new Decoder(rt);
-dec.setSource(bytes);                     // IVF, MP4/fMP4, WebM, TS — or dec.pushTemporalUnit(obus, pts)
+dec.setSource(bytes);                     // IVF, MP4/fMP4, WebM, TS — or setInitSegment()+pushSegment() for CMAF, or pushTemporalUnit(obus, pts)
 dec.runUntilFull();                       // decode ahead (ring of 10 frames)
 const frame = dec.nextFrame();            // planes in wasm memory: frame.plane(0..2), frame.planes[i].{offset,stride,width,height}
 frame.rgba();                             // or RGBA8 (SIMD128 in the SIMD build)
 ```
 
-Higher up, `Av1Player` (canvas, pacing by pts, decode budget per animation
-frame, in-thread or in a Worker) and the renderers — WebGL uploads the planes
-and does YUV→RGB in the shader; 2D uses the wasm RGBA conversion. The demo
-page (`npm run serve`, then http://localhost:8080/demo/) exercises all of it.
+Higher up, `Av1Player` (canvas, pacing by pts or by an external clock,
+decode budget per animation frame, in-thread or in a Worker), the renderers —
+WebGL uploads the planes and does YUV→RGB in the shader; 2D uses the wasm
+RGBA conversion — and `HlsAv1Video`: HLS master/media playlists → CMAF init +
+segments (demuxed by rivet inside the wasm, no decoder reset between
+segments) → canvas, clocked by a `<video>` that plays the audio rendition.
+That last one is the shape lewd-frontend needs (see `WASM_AV1_FALLBACK.md`
+there). The demo page (`npm run serve`, then http://localhost:8080/demo/)
+exercises the file paths.
 
 ## Building
 
@@ -63,8 +71,8 @@ demuxers.
 |---|---|
 | `cargo test --release` | Native: IVF parser, geometry, colour conversion against a float reference; every fixture in `testdata/` decodes to **the same MD5 libdav1d and libaom produce** (8-bit, 10-bit, 4:4:4, mono, film grain, odd 177×99); push mode ≡ IVF mode; MP4/fMP4/WebM via rivet ≡ IVF. |
 | `cargo test --release --target wasm32-unknown-unknown --test wasm_convert` (± `RUSTFLAGS=-C target-feature=+simd128`) | Inside wasm, in Node: the RGBA dispatch equals the scalar path on 55 shape/matrix combinations — the SIMD build's v128 code included. |
-| `node --test test/decode.test.mjs` (after `scripts/build.sh`) | The built `.wasm`, both variants, same MD5s through the wasm-bindgen surface; SIMD and baseline RGBA **byte-identical**; container path; ms/frame. |
-| `node test/browser.mjs` (needs Playwright) | Headless Chromium + Firefox × {baseline, simd} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM}: every frame shown, correctly paced, pixels on the canvas. |
+| `node --test test/decode.test.mjs` (after `scripts/build.sh`) | The built `.wasm`, both variants, same MD5s through the wasm-bindgen surface (so the SIMD kernels are bit-exact too); SIMD and baseline RGBA **byte-identical**; container path; CMAF segments pushed one by one; ms/frame. |
+| `node test/browser.mjs` (needs Playwright) | Headless Chromium + Firefox × {baseline, simd} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM, HLS/CMAF via `HlsAv1Video`}: every frame shown, correctly paced, pixels on the canvas — 26 combinations. |
 | `scripts/bench.mjs` | Decode speed on real 360p/720p/1080p clips (`scripts/fetch-samples.sh`), with libdav1d MD5 check. |
 
 `scripts/make-fixtures.sh` regenerates `testdata/` with ffmpeg (libaom encode,
@@ -72,16 +80,19 @@ libdav1d + libaom decode for the reference MD5s — they must agree or it aborts
 
 ## Performance (Node 22 / V8 = Chrome's engine, x86-64 laptop, single thread)
 
-| clip | baseline decode | simd decode | YUV→RGBA baseline → simd |
-|---|---|---|---|
-| BBB 640×360 | 7.6 ms/frame (131 fps) | 7.6 ms (131 fps) | 0.61 → 0.24 ms (2.6×) |
-| BBB 1280×720 | 26.3 ms/frame (38 fps) | 28.2 ms (35 fps) | 3.0 → 1.1 ms (2.7×) |
-| BBB 1920×1080 | 48.7 ms/frame (21 fps) | 44.2 ms (23 fps) | 6.1 → 2.1 ms (2.9×) |
+| clip | baseline decode | simd decode | speed-up | YUV→RGBA baseline → simd |
+|---|---|---|---|---|
+| BBB 640×360 | 8.5 ms/frame (117 fps) | 5.9 ms (170 fps) | 1.4× | 0.68 → 0.24 ms (2.8×) |
+| BBB 1280×720 | 24.0 ms/frame (42 fps) | 9.0 ms (111 fps) | 2.7× | 2.7 → 0.9 ms (2.9×) |
+| BBB 1920×1080 | 43.2 ms/frame (23 fps) | 16.7 ms (60 fps) | 2.6× | 5.4 → 2.1 ms (2.6×) |
+| Sintel 1920×818 | 33.1 ms/frame (30 fps) | 18.2 ms (55 fps) | 1.8× | 4.1 → 1.6 ms (2.6×) |
 
-Firefox's wasm tier is ~4× slower than V8 on the same machine (see the browser
-test's decode column). The SIMD build's decode gain is small today because
-rav1d's DSP kernels are scalar Rust in wasm — the profile and the plan to fix
-that are in [docs/performance.md](docs/performance.md).
+The SIMD build carries wasm SIMD128 kernels for rav1d's hot 8-bit paths —
+motion compensation (8-tap, warped), CDEF and the deblocking loop filter —
+written for this project on the `safewords/rav1d` branch, bit-exact against
+the scalar code. Firefox's wasm tier is ~4× slower than V8 on the same
+machine (browser test's decode column). Profile, method and what is left are
+in [docs/performance.md](docs/performance.md).
 
 ## Layout
 

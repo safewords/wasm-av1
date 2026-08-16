@@ -25,6 +25,8 @@ export class Av1Player {
    * @param {boolean} [opts.applyGrain=true]
    * @param {number} [opts.decodeBudgetMs=8]   max decode time per animation frame (in-thread mode)
    * @param {number} [opts.fallbackFps=24]     when the stream carries no time base
+   * @param {() => number} [opts.clock]        external media clock in seconds (e.g. `() => video.currentTime`);
+   *                                           without it the player free-runs from `play()`
    */
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
@@ -109,6 +111,8 @@ export class Av1Player {
     await this.init();
     this.stop();
     this._resetStats();
+    this.stats.variant = this.src.variant ?? this.rt?.variant ?? null;
+    this.stats.simd = this.src.simd ?? this.rt?.simd ?? null;
     this._timeBase = timeBase ?? null;
     if (!this.opts.worker && timeBase != null) this.src.setTimeBase(timeBase);
     this._frameIndex = 0;
@@ -127,8 +131,9 @@ export class Av1Player {
   play() {
     if (this.state === 'playing') return;
     if (this.state !== 'ready' && this.state !== 'paused') return;
-    // Anchor the clock so the *next* frame is due now.
-    this._t0 = performance.now() / 1000 - this._peekDue();
+    // Free-running: anchor the clock so the *next* frame is due now. With an
+    // external clock the frames are due when *it* says so.
+    if (!this.opts.clock) this._t0 = performance.now() / 1000 - this._peekDue();
     this._setState('playing');
     this._loop();
   }
@@ -186,7 +191,7 @@ export class Av1Player {
   _loop = () => {
     if (this.state !== 'playing') return;
     const tickStart = performance.now();
-    const now = tickStart / 1000 - this._t0;
+    const now = this.opts.clock ? this.opts.clock() : tickStart / 1000 - this._t0;
 
     // Show the frame that is due. If we are behind and the one after it is
     // due too, this one is late: drop it (skip the draw) and move on. Peeking

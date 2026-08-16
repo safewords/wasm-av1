@@ -1,10 +1,18 @@
-# rav1d: why a fork branch, and what is on it
+# rav1d: why a fork, and what is on it
 
 The decoder is [memorysafety/rav1d](https://github.com/memorysafety/rav1d), the
 Rust port of dav1d (BSD-2-Clause). We take it from
-**`https://github.com/safewords/rav1d`, branch `wasm32-unknown-unknown`**, which is
-upstream `main` plus one commit
-([`7546455`](https://github.com/safewords/rav1d/commit/7546455cb20fa82608c7363cf6f229030d80589d)).
+**`https://github.com/safewords/rav1d`, branch `main`**, which is upstream
+`main` (`d3d1cd6`, 2026-08-14) plus three commits:
+
+| commit | what | upstreamable |
+|---|---|---|
+| [`7546455`](https://github.com/safewords/rav1d/commit/7546455cb20fa82608c7363cf6f229030d80589d) | build for `wasm32-unknown-unknown`: `src/c_types.rs` instead of `libc::{ptrdiff_t,…,E*}` | yes, as is |
+| [`74f87c8`](https://github.com/safewords/rav1d/commit/74f87c8) | `rav1d_submit_frame::on_error` no longer panics when the frame header is already gone (a damaged temporal unit took the whole decoder down; now it is an `Err` and decoding continues, matching libdav1d) | yes, as is |
+| [`55c4d09`](https://github.com/safewords/rav1d/commit/55c4d09) | wasm32 SIMD128 kernels for MC 8-tap, warp 8×8, CDEF and the loop filter (8 bpc), see below | probably, if they take portable-SIMD kernels; otherwise it stays here |
+
+(The first commit is also on the branch `wasm32-unknown-unknown` alone, for a
+minimal upstream PR; `wasm32-simd` holds all three.)
 
 ## Why not upstream directly
 
@@ -37,9 +45,36 @@ No type or ABI change anywhere else. `cargo fmt` clean per rav1d's rustfmt.toml.
 - Film grain synthesis is on by default (rav1d applies it, like libdav1d);
   `Config::apply_grain` turns it off.
 
+## The wasm SIMD128 kernels (`src/mc/wasm.rs`, `src/cdef/wasm.rs`, `src/loopfilter/wasm.rs`)
+
+Each is reached by an early return at the top of the corresponding `_rust`
+function under `cfg(all(target_arch = "wasm32", target_feature = "simd128"))`
+for `BD::BITDEPTH == 8` (and `w >= 8` for the 8-tap filters); everything else
+falls through to the scalar code, and nothing changes on any other target.
+They are the scalar arithmetic — same widening, rounding, clipping — eight
+lanes per `v128`, and are held bit-exact by this crate's tests (every fixture
+and clip decodes to libdav1d's MD5 through the SIMD build). Notes that
+matter if you touch them:
+
+- MC: i32 accumulation via `i32x4_extmul_{low,high}_i16x8` (an 8-tap sum does
+  not fit i16); the 2-D intermediate is an uninitialised 34 KB buffer written
+  before read (the scalar path zeroes it per call, which for an 8×8 block cost
+  more than the filter). Warp uses per-pixel `i32x4_dot_i16x8` + a 4-lane
+  reduction horizontally and a transposed intermediate vertically.
+- CDEF: the padding marker `i16::MIN` must behave as "very large": abs/shift/min
+  on it are done as *unsigned* so its contribution is exactly 0, as in the
+  scalar `constrain()`.
+- Loop filter: four positions per call = four lanes; both orientations
+  (positions along a row / down the rows); the wd 4/6/8/16 `if` chain becomes
+  masks + `bitselect`.
+
+Measured effect (V8, 720p BBB): decode 23.3 → 9.5 ms/frame; the whole SIMD
+build 1.4–2.7× faster than baseline depending on content.
+
 ## Upstreaming
 
-The branch is PR-ready against `memorysafety/rav1d`. When it (or an
-equivalent) lands, `Cargo.toml` flips back to upstream and the fork can go.
-Until then `cargo update -p rav1d` moves along our branch; rebasing it on a
-newer upstream `main` is one cherry-pick.
+The first two commits are PR-ready against `memorysafety/rav1d`. When they
+land, `Cargo.toml` can point at upstream plus only the kernels (or at
+upstream alone if those are taken too). Until then `cargo update -p rav1d`
+moves along `main` of the fork; rebasing on a newer upstream is a
+cherry-pick of three commits.

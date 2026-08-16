@@ -52,6 +52,30 @@ const harness = ({ file = 'testsrc-320x180-8bit.ivf', ...opts }) => `
   window.__result = { info, stats: p.stats, errors, wall, nonBlackFraction: nonBlack / (px.length / 4), rendererKind: p.rendererKind, png: probe.toDataURL('image/png') };
 `;
 
+// HLS/CMAF through HlsAv1Video, clocked by a fake media clock that starts at
+// start(): init + two 1 s segments of the same stream, 48 frames.
+const hlsHarness = (opts) => `
+  const canvas = document.createElement('canvas'); document.body.appendChild(canvas);
+  let t0 = null;
+  const clock = () => (t0 === null ? 0 : (performance.now() - t0) / 1000);
+  const v = new HlsAv1Video(canvas, { ...${JSON.stringify(opts)}, clock });
+  const errors = [];
+  v.onerror = (e) => errors.push(String(e.message || e));
+  const master = null;
+  await v.selectVariant('${base}/testdata/cmaf/index.m3u8');
+  const ended = new Promise((res) => { v.player.onstate = (s) => { if (s === 'ended') res(); }; });
+  t0 = performance.now();
+  v.start();
+  await Promise.race([ended, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000))]);
+  const wall = performance.now() - t0;
+  v.stop();
+  const probe = document.createElement('canvas'); probe.width = canvas.width; probe.height = canvas.height;
+  probe.getContext('2d').drawImage(canvas, 0, 0);
+  const px = probe.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  let nonBlack = 0; for (let i = 0; i < px.length; i += 4) if (px[i] + px[i+1] + px[i+2] > 60) nonBlack++;
+  window.__result = { info: v.player.info ?? null, stats: v.player.stats, errors, wall, nonBlackFraction: nonBlack / (px.length / 4), rendererKind: v.player.rendererKind, png: probe.toDataURL('image/png') };
+`;
+
 const combos = [];
 for (const variant of ['baseline', 'simd'])
   for (const renderer of ['webgl', '2d'])
@@ -60,6 +84,8 @@ for (const variant of ['baseline', 'simd'])
 combos.push({ variant: 'simd', renderer: 'webgl', worker: false, file: 'testsrc-320x180-8bit.fmp4' });
 combos.push({ variant: 'simd', renderer: 'webgl', worker: true, file: 'testsrc-320x180-8bit.mp4' });
 combos.push({ variant: 'baseline', renderer: '2d', worker: true, file: 'testsrc-320x180-8bit.webm' });
+combos.push({ variant: 'simd', renderer: 'webgl', worker: false, hls: true });
+combos.push({ variant: 'simd', renderer: 'webgl', worker: true, hls: true });
 
 mkdirSync(join(root, 'test', 'out'), { recursive: true });
 let failures = 0;
@@ -77,11 +103,11 @@ for (const [name, launcher] of [['chromium', chromium], ['firefox', firefox]]) {
     page.on('pageerror', (e) => consoleErrors.push(String(e)));
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     await page.goto(`${base}/demo/`);
-    const label = `${name} ${combo.variant} ${combo.renderer} ${combo.worker ? 'worker' : 'main'}${combo.file ? ' ' + combo.file.split('.').pop() : ''}`;
+    const label = `${name} ${combo.variant} ${combo.renderer} ${combo.worker ? 'worker' : 'main'}${combo.file ? ' ' + combo.file.split('.').pop() : ''}${combo.hls ? ' hls-cmaf' : ''}`;
     try {
       await page.evaluate((src) => new Promise((res, rej) => {
         const s = document.createElement('script'); s.type = 'module';
-        s.textContent = `import { Av1Player } from '${location.origin}/js/index.js';
+        s.textContent = `import { Av1Player, HlsAv1Video } from '${location.origin}/js/index.js';
 try { ${src}; window.__done = true; } catch (e) { window.__err = String(e && e.stack || e); }`;
         document.body.appendChild(s);
         const deadline = Date.now() + 40000;
@@ -90,12 +116,12 @@ try { ${src}; window.__done = true; } catch (e) { window.__err = String(e && e.s
           else if (window.__err) { clearInterval(t); rej(new Error(window.__err)); }
           else if (Date.now() > deadline) { clearInterval(t); rej(new Error('harness timeout')); }
         }, 20);
-      }), harness(combo));
+      }), combo.hls ? hlsHarness({ variant: combo.variant, renderer: combo.renderer, worker: combo.worker }) : harness(combo));
       const r = await page.evaluate(() => window.__result);
       const st = r.stats;
       const okFrames = st.framesShown + st.framesDropped === 48;
       const okDraw = r.nonBlackFraction > 0.5;
-      const okInfo = combo.file?.endsWith('webm') ? true : (r.info.frameCount === 48 || r.info.frameCount === null);
+      const okInfo = combo.hls || combo.file?.endsWith('webm') ? true : (r.info.frameCount === 48 || r.info.frameCount === null);
       const ok = okFrames && okDraw && okInfo && r.errors.length === 0 && consoleErrors.length === 0 && st.variant === combo.variant && r.rendererKind === combo.renderer;
       if (!ok) failures++;
       console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(39)} shown ${st.framesShown} dropped ${st.framesDropped} draw ${(st.drawMs / Math.max(1, st.framesShown)).toFixed(2)}ms ${st.worker ? '' : `decode ${(st.decodeMs / 48).toFixed(2)}ms`} path ${st.drawPath} wall ${r.wall.toFixed(0)}ms nonblack ${(r.nonBlackFraction * 100).toFixed(0)}%${r.errors.length ? ' errors: ' + r.errors.join('; ') : ''}${consoleErrors.length ? ' console: ' + consoleErrors.join('; ') : ''}`);

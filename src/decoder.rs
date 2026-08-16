@@ -200,6 +200,12 @@ pub struct Decoder {
     /// Size of the most recent decoded frame — what `width()`/`height()`
     /// answer in push mode, where there is no container header to ask.
     last_size: Option<(usize, usize)>,
+    /// Segment-fed mode: the initialisation segment prepended to each pushed
+    /// media segment, and the timescale rivet reported for them.
+    #[cfg(feature = "container")]
+    init_segment: Option<Vec<u8>>,
+    #[cfg(feature = "container")]
+    segment_time_base: Option<(u32, u32)>,
     stats: Stats,
 }
 
@@ -229,6 +235,10 @@ impl Decoder {
             drained: true,
             input_pending: false,
             last_size: None,
+            #[cfg(feature = "container")]
+            init_segment: None,
+            #[cfg(feature = "container")]
+            segment_time_base: None,
             stats: Stats::default(),
         })
     }
@@ -288,6 +298,75 @@ impl Decoder {
         Ok(info)
     }
 
+    /// Segment-fed playback (CMAF / fMP4 as HLS or DASH serve it): remember
+    /// the initialisation segment (`ftyp`+`moov`), so that each media segment
+    /// (`moof`+`mdat`) pushed with [`Decoder::push_segment`] can be demuxed
+    /// as `init ‖ segment` by rivet and its samples queued as temporal units —
+    /// without resetting the decoder between segments. Switches to push mode
+    /// (dropping an IVF/container source, keeping queued/decoded frames).
+    #[cfg(feature = "container")]
+    pub fn set_init_segment(&mut self, init: Vec<u8>) -> Result<(), Error> {
+        if !matches!(self.source, Some(Source::Push { .. })) {
+            self.reset_state()?;
+            self.source = Some(Source::Push {
+                queue: VecDeque::new(),
+                ended: false,
+            });
+        }
+        self.init_segment = Some(init);
+        self.segment_time_base = None;
+        Ok(())
+    }
+
+    /// Demux one media segment (with the init segment from
+    /// [`Decoder::set_init_segment`] prepended; a self-contained file works
+    /// too) and queue every video sample as a temporal unit with its pts.
+    /// Returns how many were queued. The time base is the container's
+    /// (see [`Decoder::time_base`]).
+    #[cfg(feature = "container")]
+    pub fn push_segment(&mut self, segment: &[u8]) -> Result<usize, Error> {
+        if !matches!(self.source, Some(Source::Push { .. })) {
+            self.reset_state()?;
+            self.source = Some(Source::Push {
+                queue: VecDeque::new(),
+                ended: false,
+            });
+        }
+        let mut whole =
+            Vec::with_capacity(self.init_segment.as_ref().map_or(0, |i| i.len()) + segment.len());
+        if let Some(init) = &self.init_segment {
+            whole.extend_from_slice(init);
+        }
+        whole.extend_from_slice(segment);
+        let mut demuxer = container::streaming::demux_streaming_shared(bytes::Bytes::from(whole))
+            .map_err(|e| Error::Container(format!("{e:#}")))?;
+        let header = demuxer.header().clone();
+        if !header.codec.eq_ignore_ascii_case("av1") {
+            return Err(Error::Container(format!(
+                "video track is {}, not av1",
+                header.codec
+            )));
+        }
+        if header.timescale > 0 {
+            self.segment_time_base = Some((1, header.timescale));
+        }
+        let mut n = 0;
+        loop {
+            match demuxer.next_video_sample() {
+                Ok(Some(s)) => {
+                    self.push_temporal_unit(s.data, s.pts_ticks)?;
+                    n += 1;
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    self.stats.decode_errors += 1;
+                    return Err(Error::Container(format!("{e:#}")));
+                }
+            }
+        }
+        Ok(n)
+    }
+
     /// The container's stream info, if the source is a container.
     #[cfg(feature = "container")]
     pub fn container_info(&self) -> Option<ContainerInfo> {
@@ -311,6 +390,8 @@ impl Decoder {
             Some(Source::Container { header, .. }) => {
                 (header.timescale > 0).then_some((1, header.timescale))
             }
+            #[cfg(feature = "container")]
+            Some(Source::Push { .. }) => self.segment_time_base,
             _ => None,
         }
     }

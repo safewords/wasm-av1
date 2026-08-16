@@ -70,6 +70,10 @@ export class WorkerDecoder {
         break;
       case 'flushed':
         break;
+      case 'segment':
+        this.info = m.info;
+        this.onsegment?.(m);
+        break;
       case 'error': {
         const err = new Error(m.message);
         if (m.fatal) this._rejectReady?.(err);
@@ -113,6 +117,20 @@ export class WorkerDecoder {
     const buf = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     this.finished = false;
     this.worker.postMessage({ type: 'push', data: buf, pts, timeBase }, [buf]);
+  }
+
+  /** Segment-fed playback: the CMAF init segment (transferred). */
+  setInitSegment(bytes) {
+    const buf = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    this.finished = false;
+    this.worker.postMessage({ type: 'initSegment', data: buf }, [buf]);
+  }
+
+  /** One media segment (transferred); demuxed in the worker, samples queued. */
+  pushSegment(bytes) {
+    const buf = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    this.finished = false;
+    this.worker.postMessage({ type: 'segment', data: buf }, [buf]);
   }
 
   endOfStream() {

@@ -7,7 +7,7 @@
 // the page acknowledges them. One copy per frame (wasm memory cannot be
 // transferred), which is what an ImageBitmap path would cost anyway.
 //
-// Messages in:  init | ivf | container | source | push | eos | flush | ack | close
+// Messages in:  init | ivf | container | source | initSegment | segment | push | eos | flush | ack | close
 // Messages out: ready | info | frame | finished | error
 //
 // Use `WorkerDecoder` in worker-client.js rather than talking to this directly.
@@ -94,6 +94,15 @@ self.onmessage = async (ev) => {
       case 'push': {
         if (m.timeBase != null) dec.setTimeBase(m.timeBase);
         dec.pushTemporalUnit(new Uint8Array(m.data), m.pts ?? 0);
+        schedule();
+        break;
+      }
+      case 'initSegment':
+        dec.setInitSegment(new Uint8Array(m.data));
+        break;
+      case 'segment': {
+        const n = dec.pushSegment(new Uint8Array(m.data));
+        post({ type: 'segment', samples: n, timeBase: dec.timeBase, info: dec.info() });
         schedule();
         break;
       }

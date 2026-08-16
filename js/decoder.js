@@ -192,7 +192,25 @@ export class Decoder {
 
   /** Push mode: one temporal unit (the OBUs of one AV1 sample) and its pts. */
   pushTemporalUnit(bytes, pts = 0) {
-    this.raw.pushTemporalUnit(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), pts);
+    this.raw.pushTemporalUnit(asU8(bytes), pts);
+  }
+
+  /**
+   * Segment-fed playback (HLS/DASH CMAF): give the initialisation segment
+   * once, then `pushSegment()` each media segment. Frames flow continuously
+   * across segments; pts are in the container's timescale, which becomes
+   * `timeBase` after the first segment.
+   */
+  setInitSegment(bytes) {
+    this.raw.setInitSegment(asU8(bytes));
+    this.timeBase = null;
+  }
+
+  /** Demux one media segment in wasm (rivet) and queue its samples. Returns the sample count. */
+  pushSegment(bytes) {
+    const n = this.raw.pushSegment(asU8(bytes));
+    this._readTimeBase();
+    return n;
   }
 
   /** Push mode: how to turn pts into seconds (e.g. `1 / track.timescale`). */

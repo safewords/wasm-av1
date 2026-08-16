@@ -1,4 +1,13 @@
-# Putting this in lewd-frontend (plan — not implemented yet)
+# Putting this in lewd-frontend
+
+The concrete, file-by-file plan lives with the frontend:
+`lewd/lewd-frontend/WASM_AV1_FALLBACK.md`. This page is the package-side
+summary of what it relies on. The library-side pieces it needs all exist and
+are tested: `HlsAv1Video` (`js/hls.js`: master/media playlist parsing, init +
+segment fetching with a credentials hook, prefetch, seek, variant switch,
+external clock), the segment-fed decoder API (`setInitSegment` /
+`pushSegment`, rivet demux in wasm, no reset between segments), the Worker,
+the WebGL renderer, and the feature detection.
 
 The long-term goal: on a device whose browser cannot decode AV1 natively (no
 hardware decoder, no software AV1 in the browser), lewd.net still plays its
@@ -31,31 +40,25 @@ Chrome < 96); nothing to do for those.
 ## The pipeline (per rendition)
 
 ```
-m3u8 (variant + media playlist)      already parsed by hls.js, or fetch it: it is text
-   │
-   ├─ init.mp4  ─┐
-   └─ seg-N.m4s ─┴─→ concat(init, seg) → decoder.setSourceContainer(bytes)   (rivet demux in wasm)
-                                          decoder.run() … nextFrame() → frames with pts (track timescale)
-   audio: a plain <audio> on the AAC media playlist (hls.js can drive it) — it is the clock:
-          show the frame whose seconds ≤ audio.currentTime, drop late ones (Av1Player already does this
-          against performance.now(); swap the clock source).
-   render: WebGLRenderer on a <canvas> in PlayerSlot where the <video> would be (YUV in the shader,
-           no CPU conversion); Canvas2DRenderer where WebGL is missing.
-   thread: WorkerDecoder — decode + demux off the main thread, planes transferred per frame.
+master.m3u8 ──parseMaster──▶ variants (av01, sorted by bandwidth) + audio group
+   audio rendition ──▶ hls.js on the <video>  (the clock and the transport; controls untouched)
+   video rendition ──parseMediaPlaylist──▶ init.mp4 + seg-N.m4s
+        init  ──▶ decoder.setInitSegment(init)
+        seg-N ──▶ decoder.pushSegment(seg)      rivet demuxes init‖seg in wasm, samples queued as temporal units
+                  decoder.run() … nextFrame()   frames with pts in the track timescale
+   HlsAv1Video: prefetch `prefetchSeconds` ahead of `clock()`, show the frame due at video.currentTime,
+                drop late ones, seek() = flush + refill from the segment holding the target
+   render: WebGLRenderer on a <canvas> beside the <video> (YUV in the shader); Canvas2DRenderer fallback
+   thread: WorkerDecoder — decode + demux off the main thread, planes transferred per frame
 ```
-
-rivet's demuxer is whole-buffer and forward-only, so it is one
-`setSourceContainer` per `init ‖ segment` (the init is a few KB; parsing it
-again per segment is nothing). Segments are 2–6 s of frames, i.e. a bounded
-amount of decode-ahead; the ring (`maxBuffered`) already limits memory.
 
 ## Which rung
 
 Measure, do not guess: decode the first segment and compare ms/frame with the
 frame duration; pick the highest rung whose measured decode ≤ ~60 % of the
-frame time on that device. On this laptop the SIMD build does 720p at ~35 fps
-and 1080p at ~23 fps single-threaded (docs/performance.md); an old phone is
-3–8× slower, so expect 360p/480p there. That is still AV1 playing where today
+frame time on that device. On this laptop the SIMD build does 720p at ~110 fps
+and 1080p at ~60 fps single-threaded (docs/performance.md); an old phone is
+3–8× slower, so expect 480p/720p there. That is still AV1 playing where today
 nothing plays.
 
 ## Loading

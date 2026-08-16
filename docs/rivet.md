@@ -18,7 +18,7 @@ and the demux happens in wasm. Verified: MP4, fMP4 and WebM remuxes of the
 320×180 fixture decode to the IVF's MD5, natively and in both wasm variants;
 Playwright plays fMP4/MP4/WebM in Chromium and Firefox.
 
-## Why a branch: `rivet-transcoder/rivet` @ `wasm32-demux`
+## What had to change in rivet (merged into `develop` as `89be431`)
 
 `rivet-container` hard-depended on `rivet-codec`, whose dependency tree
 (`libloading` dlopen for the GPU SDKs, `nvml-wrapper-sys`, the `minimp3` and
@@ -27,8 +27,8 @@ in `nvml-wrapper-sys` before reaching the demuxer. All that container used
 from codec was nine plain value types (`codec::frame::*`), the 3-field
 `EncodedPacket`, and the pure-Rust bitstream sniffing in `codec::pixel_format`.
 
-The branch (`89be431`, off `develop` at `1a6682a`) moves those into a new
-dependency-free crate **`rivet-frame`** (imported as `frame`), makes
+The change (`89be431`, off `develop` at `1a6682a`, fast-forwarded into
+`develop`) moves those into a new dependency-free crate **`rivet-frame`** (imported as `frame`), makes
 `rivet-container` depend on that instead (rivet-codec becomes a
 dev-dependency for one test), and has `rivet-codec` re-export everything at
 the old paths (`codec::frame`, `codec::pixel_format`,
@@ -44,8 +44,19 @@ feature; fails identically on `develop`). `--all-targets` additionally hits
 `crates/codec/tests/nvdec_smoke.rs` needing `--features nvidia` — also
 pre-existing.
 
-The branch is PR-ready against `develop`; when merged, `Cargo.toml` here can
-point at `develop` or a rev. **Nothing of rivet is vendored here.**
+`Cargo.toml` here points at rivet `develop`; `Cargo.lock` pins the revision.
+**Nothing of rivet is vendored here.**
+
+## Segment-fed input (what HLS/CMAF needs)
+
+rivet's demuxers are whole-buffer and forward-only, so for segmented delivery
+the decoder keeps the initialisation segment and demuxes each media segment
+as `init ‖ segment` (`Decoder::set_init_segment` / `push_segment`,
+`setInitSegment` / `pushSegment` in wasm and JS): rivet yields the samples
+with pts in the track timescale and they are queued as temporal units — the
+decoder is *not* reset between segments, so frames flow continuously across
+segment boundaries. Tested with `testdata/cmaf/` (init + two 1 s segments):
+same MD5 as the whole file, pts continuous. `js/hls.js` builds on it.
 
 ## Cost and how to shrink it
 

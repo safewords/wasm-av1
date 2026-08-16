@@ -13,17 +13,18 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # The decoder. rav1d is memorysafety.org's Rust port of dav1d (BSD-2-Clause).
-# We take it from our fork's `wasm32-unknown-unknown` branch, which is upstream
-# `main` plus one commit making it build without a libc (see docs/rav1d.md).
+# We take it from our fork's `main`, which is upstream `main` plus three
+# commits: build without a libc, no panic on a broken temporal unit, and the
+# wasm32 SIMD128 kernels for MC/warp/CDEF/loop filter (see docs/rav1d.md).
 # Nothing of it is vendored here; Cargo.lock pins the exact revision.
-rav1d = { git = "https://github.com/safewords/rav1d", branch = "wasm32-unknown-unknown", default-features = false }
+rav1d = { git = "https://github.com/safewords/rav1d", branch = "main", default-features = false }
 # The demuxers: MP4/fMP4/CMAF, WebM/MKV, TS. rivet is the org's own transcoder;
 # its `rivet-container` crate hands us AV1 temporal units + pts straight out of
-# a container. From our `wasm32-demux` branch, which is rivet `develop` plus the
-# commit that lets the crate build without rivet-codec (see docs/rivet.md).
+# a container. rivet `develop` carries the commit that lets the crate build
+# without rivet-codec (see docs/rivet.md); Cargo.lock pins the revision.
 # Optional: without the `container` feature only IVF and raw temporal units are
 # accepted, and the .wasm is smaller.
-container = { git = "https://github.com/rivet-transcoder/rivet", branch = "wasm32-demux", package = "rivet-container", default-features = false, optional = true }
+container = { git = "https://github.com/rivet-transcoder/rivet", branch = "develop", package = "rivet-container", default-features = false, optional = true }
 bytes = { version = "1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

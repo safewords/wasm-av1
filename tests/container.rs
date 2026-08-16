@@ -126,3 +126,58 @@ fn flush_drops_a_container_source() {
     assert!(matches!(dec.run(), Err(Error::NoSource)));
     assert!(dec.container_info().is_none());
 }
+
+#[test]
+fn cmaf_segments_pushed_one_by_one_decode_continuously() {
+    // testdata/cmaf: init.mp4 + seg0.m4s + seg1.m4s (1 s each) of the same
+    // stream as the 320x180 fixture, cut the way HLS serves CMAF.
+    let (want_md5, want_frames) = reference_md5();
+    let mut dec = Decoder::new(Config {
+        max_buffered: 4,
+        ..Config::default()
+    })
+    .unwrap();
+    dec.set_init_segment(testdata("cmaf/init.mp4")).unwrap();
+    assert!(
+        dec.time_base().is_none(),
+        "no time base until a segment is seen"
+    );
+    let mut frames = Vec::new();
+    let mut total_samples = 0;
+    for seg in ["cmaf/seg0.m4s", "cmaf/seg1.m4s"] {
+        let n = dec.push_segment(&testdata(seg)).unwrap();
+        assert!(n > 0, "{seg}: no samples");
+        total_samples += n;
+        // Decode what is queued, popping frames as a player would, so the ring
+        // never blocks the next segment.
+        while let RunOutcome::Consumed | RunOutcome::Full = dec.run().unwrap() {
+            while let Some(f) = dec.next_frame() {
+                frames.push(f.clone());
+            }
+        }
+        while let Some(f) = dec.next_frame() {
+            frames.push(f.clone());
+        }
+    }
+    assert_eq!(
+        dec.time_base(),
+        Some((1, 12288)),
+        "container timescale surfaced"
+    );
+    assert!(!dec.finished(), "not finished until end_of_stream");
+    dec.end_of_stream();
+    while !dec.finished() {
+        dec.run().unwrap();
+        while let Some(f) = dec.next_frame() {
+            frames.push(f.clone());
+        }
+    }
+    assert_eq!(total_samples as u64, want_frames);
+    assert_eq!(frames.len() as u64, want_frames);
+    // pts continue across the segment boundary in the container's timescale.
+    for w in frames.windows(2) {
+        assert_eq!(w[1].pts.unwrap() - w[0].pts.unwrap(), 512, "pts step");
+    }
+    assert_eq!(md5_of(&frames), want_md5, "MD5 across segments");
+    assert_eq!(dec.width(), Some(320));
+}

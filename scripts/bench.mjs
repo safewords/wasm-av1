@@ -45,11 +45,11 @@ function bench({ mod, wasm }) {
   const dec = new mod.Av1Decoder(4);
   dec.setSourceIvf(ivf);
   const md5 = createHash('md5');
-  let frames = 0, decodeMs = 0, worst = 0, convertMs = 0, runs = 0;
+  let frames = 0, decodeMs = 0, worst = 0, convertMs = 0, runs = 0, errors = 0;
   const per = [];
   while (!dec.finished() && frames < maxFrames) {
     const t0 = performance.now();
-    dec.run();
+    try { dec.run(); } catch (e) { errors++; }   // a damaged temporal unit is reported, not fatal
     const dt = performance.now() - t0;
     decodeMs += dt; runs++;
     if (dt > worst) worst = dt;
@@ -67,7 +67,7 @@ function bench({ mod, wasm }) {
   const w = dec.width(), h = dec.height();
   dec.free();
   per.sort((a, b) => a - b);
-  return { frames, w, h, decodeMs, worst, convertMs, md5: md5.digest('hex'), p50: per[Math.floor(per.length * 0.5)], p95: per[Math.floor(per.length * 0.95)] };
+  return { frames, w, h, decodeMs, worst, convertMs, errors, md5: md5.digest('hex'), p50: per[Math.floor(per.length * 0.5)], p95: per[Math.floor(per.length * 0.95)] };
 }
 
 console.log(`${path.basename(file)} — first ${maxFrames} frames, ${variants.join(' vs ')}${doRgba ? ', with RGBA conversion' : ''}`);
@@ -81,7 +81,7 @@ for (const v of variants) {
   console.log(
     `  ${v.padEnd(9)} ${r.w}x${r.h}  ${r.frames} frames  decode ${(r.decodeMs / r.frames).toFixed(2)} ms/frame (${fps.toFixed(0)} fps)  p50 ${r.p50.toFixed(2)}  p95 ${r.p95.toFixed(2)}  worst TU ${r.worst.toFixed(1)} ms` +
       (doRgba ? `  rgba ${(r.convertMs / r.frames).toFixed(3)} ms/frame` : '') +
-      `  md5 ${r.md5.slice(0, 8)}`,
+      (r.errors ? `  errors ${r.errors}` : '') + `  md5 ${r.md5.slice(0, 8)}`,
   );
 }
 const refFile = file + '.md5';

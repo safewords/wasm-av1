@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0",
+  "rav1d": "55c4d094e6018d2253997228337b26e8cf354f0c",
+  "profile": "release",
+  "features": "default",
+  "variants": {
+    "baseline": { "wasm": "baseline/wasm_av1_bg.wasm", "js": "baseline/wasm_av1.js", "bytes": 1695614 },
+    "simd":     { "wasm": "simd/wasm_av1_bg.wasm",     "js": "simd/wasm_av1.js",     "bytes": 1792150 }
+  }
+}

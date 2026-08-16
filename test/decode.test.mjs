@@ -238,3 +238,38 @@ test('container: MP4, fragmented MP4 and WebM decode to the IVF reference (rivet
   assert.ok(dec.runUntilFull() !== undefined);
   dec.free();
 });
+
+test('segment-fed: CMAF init + media segments pushed one at a time (rivet demux, no reset)', async () => {
+  const m = await load('simd');
+  const ref = fixtures.find((f) => f.name === 'testsrc-320x180-8bit');
+  const dec = new m.mod.Av1Decoder(4);
+  dec.setInitSegment(readFileSync(path.join(testdata, 'cmaf', 'init.mp4')));
+  assert.equal(dec.timeBaseDen(), 0, 'no time base before a segment');
+  const md5 = createHash('md5');
+  let frames = 0;
+  let lastPts = null;
+  const drain = () => {
+    while (dec.nextFrame()) {
+      const pts = dec.framePts();
+      if (lastPts !== null) assert.equal(pts - lastPts, 512, 'pts continue across segments');
+      lastPts = pts;
+      md5.update(new Uint8Array(m.wasm.memory.buffer, dec.framePtr(), dec.frameLen()));
+      frames++;
+    }
+  };
+  let samples = 0;
+  for (const seg of ['seg0.m4s', 'seg1.m4s']) {
+    samples += dec.pushSegment(readFileSync(path.join(testdata, 'cmaf', seg)));
+    let r;
+    do { r = dec.run(); drain(); } while (r === m.mod.RunResult.Consumed || r === m.mod.RunResult.Full);
+  }
+  assert.equal(dec.timeBaseNum(), 1);
+  assert.equal(dec.timeBaseDen(), 12288);
+  assert.equal(dec.finished(), false);
+  dec.endOfStream();
+  while (!dec.finished()) { dec.run(); drain(); }
+  assert.equal(samples, ref.frames);
+  assert.equal(frames, ref.frames);
+  assert.equal(md5.digest('hex'), ref.md5);
+  dec.free();
+});

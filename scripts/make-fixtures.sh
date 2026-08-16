@@ -71,3 +71,10 @@ for f in mp4 fmp4 webm; do
   printf '%-40s %s bytes  %s\n' "testsrc-320x180-8bit.$f" "$(stat -c %s testdata/testsrc-320x180-8bit.$f)" \
     "$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,time_base -of csv=p=0 testdata/testsrc-320x180-8bit.$f)"
 done
+
+# CMAF as HLS serves it: an init segment plus 1-second fMP4 media segments,
+# for the segment-fed API (setInitSegment / pushSegment). Same stream again.
+rm -rf testdata/cmaf && mkdir -p testdata/cmaf
+ffmpeg -hide_banner -loglevel error -y -i "$src" -c:v copy -f hls -hls_segment_type fmp4 -hls_time 1 \
+  -hls_playlist_type vod -hls_fmp4_init_filename init.mp4 -hls_segment_filename testdata/cmaf/seg%d.m4s testdata/cmaf/index.m3u8
+ls testdata/cmaf

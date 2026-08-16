@@ -469,7 +469,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "rav1d"
 version = "1.1.0"
-source = "git+https://github.com/safewords/rav1d?branch=wasm32-unknown-unknown#7546455cb20fa82608c7363cf6f229030d80589d"
+source = "git+https://github.com/safewords/rav1d?branch=main#55c4d094e6018d2253997228337b26e8cf354f0c"
 dependencies = [
  "assert_matches",
  "atomig",
@@ -509,7 +509,7 @@ dependencies = [
 [[package]]
 name = "rivet-container"
 version = "0.2.0"
-source = "git+https://github.com/rivet-transcoder/rivet?branch=wasm32-demux#89be43124e99a2e6562e92d3e78eb24281ad7e9a"
+source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#89be43124e99a2e6562e92d3e78eb24281ad7e9a"
 dependencies = [
  "anyhow",
  "bytes",
@@ -524,7 +524,7 @@ dependencies = [
 [[package]]
 name = "rivet-frame"
 version = "0.2.0"
-source = "git+https://github.com/rivet-transcoder/rivet?branch=wasm32-demux#89be43124e99a2e6562e92d3e78eb24281ad7e9a"
+source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#89be43124e99a2e6562e92d3e78eb24281ad7e9a"
 dependencies = [
  "bytes",
 ]

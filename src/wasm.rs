@@ -143,6 +143,45 @@ impl Av1Decoder {
         }
     }
 
+    /// Segment-fed playback: keep the CMAF/fMP4 initialisation segment
+    /// (`ftyp`+`moov`) so `pushSegment` can demux media segments against it.
+    /// Switches to push mode. Throws without the `container` feature.
+    #[wasm_bindgen(js_name = "setInitSegment")]
+    pub fn set_init_segment(&mut self, init: &[u8]) -> Result<(), JsError> {
+        #[cfg(feature = "container")]
+        {
+            self.inner.set_init_segment(init.to_vec()).map_err(js_err)
+        }
+        #[cfg(not(feature = "container"))]
+        {
+            let _ = init;
+            Err(JsError::new(
+                "this build has no container support (feature `container`)",
+            ))
+        }
+    }
+
+    /// Demux one media segment (`moof`+`mdat`, or a whole file) with rivet
+    /// and queue its samples as temporal units; returns how many. Frames keep
+    /// flowing across segments — no reset. Time base = the container's.
+    #[wasm_bindgen(js_name = "pushSegment")]
+    pub fn push_segment(&mut self, segment: &[u8]) -> Result<u32, JsError> {
+        #[cfg(feature = "container")]
+        {
+            self.inner
+                .push_segment(segment)
+                .map(|n| n as u32)
+                .map_err(js_err)
+        }
+        #[cfg(not(feature = "container"))]
+        {
+            let _ = segment;
+            Err(JsError::new(
+                "this build has no container support (feature `container`)",
+            ))
+        }
+    }
+
     /// Queue one temporal unit (an AV1 sample's OBUs) with its pts.
     #[wasm_bindgen(js_name = "pushTemporalUnit")]
     pub fn push_temporal_unit(&mut self, data: &[u8], pts: f64) -> Result<(), JsError> {

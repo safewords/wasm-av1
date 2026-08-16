@@ -19,6 +19,8 @@ export class Av1Player {
    * @param {object} [opts]
    * @param {'auto'|'webgl'|'2d'} [opts.renderer='auto']
    * @param {boolean} [opts.worker=false]      decode in a Web Worker
+   * @param {string|URL} [opts.workerUrl]      the worker script (default: ./worker.js next to this file, resolved by the bundler);
+   *                                           set it when serving js/ statically, e.g. `${baseUrl}js/worker.js`
    * @param {'auto'|'simd'|'baseline'} [opts.variant='auto']
    * @param {string|URL} [opts.baseUrl]        pkg/ directory
    * @param {number} [opts.maxBuffered=10]
@@ -62,6 +64,7 @@ export class Av1Player {
       this.src = new WorkerDecoder({
         variant: this.opts.variant, baseUrl: this.opts.baseUrl, maxBuffered: this.opts.maxBuffered,
         applyGrain: this.opts.applyGrain, output: this.rendererKind === 'webgl' ? 'planes' : 'rgba',
+        workerUrl: this.opts.workerUrl, prefetch: this.opts.prefetch,
       });
       this.src.onerror = (e) => this.onerror?.(e);
       const r = await this.src.ready;

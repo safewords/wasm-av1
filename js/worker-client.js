@@ -23,8 +23,14 @@ export class WorkerDecoder {
     this.onerror = null;
     this.onframe = null;
     this._waiters = [];
-    const url = opts.workerUrl ?? new URL('./worker.js', import.meta.url);
-    this.worker = new Worker(url, { type: 'module' });
+    // Bundlers (Vite, webpack) only recognise a worker entry when the URL is
+    // built inline in the `new Worker(...)` call; a variable defeats it and
+    // the file gets copied as a plain asset with its bare imports intact.
+    // Consumers that serve js/ statically can bypass all of that with
+    // `workerUrl` (worker.js imports ./loader.js and ./decoder.js relatively).
+    this.worker = opts.workerUrl
+      ? new Worker(opts.workerUrl, { type: 'module' })
+      : new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
     this.ready = new Promise((resolve, reject) => {
       this._resolveReady = resolve;
       this._rejectReady = reject;

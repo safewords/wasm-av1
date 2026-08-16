@@ -9,7 +9,7 @@
 // the AV1 video rendition onto a `<canvas>` synced to `video.currentTime`.
 //
 //   import { HlsAv1Video } from '@safewords/wasm-av1';
-//   const v = new HlsAv1Video(canvas, { clock: () => videoEl.currentTime, worker: true, baseUrl: '/wasm-av1/' });
+//   const v = new HlsAv1Video(canvas, { clock: () => videoEl.currentTime, worker: true, baseUrl: '/wasm-av1/', workerUrl: '/wasm-av1/js/worker.js' });
 //   const master = await v.loadMaster(masterUrl);   // parsed variants + audio groups
 //   await v.selectVariant(master.variants[0]);      // fetches init, starts prefetching
 //   v.start();                                      // paints when the clock says so

@@ -64,7 +64,10 @@ unauthenticated artefacts on the GitHub Release:
 That tarball is `npm pack` of this package (`js/` + `pkg/`), so
 `import { … } from '@safewords/wasm-av1'` works, and `pkg/` is there to copy
 into your static assets (the `.wasm` must be served as files, not bundled —
-pass `baseUrl` to `loadWasmAv1`/`Av1Player`/`HlsAv1Video`). `wasm-av1-pkg-<ver>.zip`
+pass `baseUrl` to `loadWasmAv1`/`Av1Player`/`HlsAv1Video`). For the Worker,
+either let your bundler pick up `new Worker(new URL('./worker.js', import.meta.url))`
+or — more predictably — serve `js/` statically too and pass
+`workerUrl: '<baseUrl>js/worker.js'` (its imports are relative). `wasm-av1-pkg-<ver>.zip`
 is `pkg/` alone for non-npm consumers. `github:safewords/wasm-av1#v0.1.0`
 works too (the repo is public and `pkg/` is committed).
 

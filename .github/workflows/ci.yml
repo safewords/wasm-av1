@@ -55,6 +55,11 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: mozilla-actions/sccache-action@v0.0.9
+      # The image's apt Node is too old for the wasm-bindgen-test harness (V8
+      # fatal); the tests are written and verified against Node 22.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: wasm-bindgen-cli ${{ env.WASM_BINDGEN_VERSION }}
         run: |
           mkdir -p "$HOME/.cargo/bin"

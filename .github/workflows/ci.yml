@@ -85,7 +85,9 @@ jobs:
       - name: node tests against the built wasm
         run: node --test test/decode.test.mjs
       - name: sizes
-        run: cat pkg/manifest.json && for v in baseline simd threads simd-threads; do echo "$v gzip: $(gzip -9 -c pkg/$v/wasm_av1_bg.wasm | wc -c)"; done
+        run: |
+          cat pkg/manifest.json
+          for v in baseline simd threads simd-threads; do echo "$v gzipped $(gzip -9 -c pkg/$v/wasm_av1_bg.wasm | wc -c)"; done
       - uses: actions/upload-artifact@v4
         with:
           name: pkg

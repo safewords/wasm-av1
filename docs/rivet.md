@@ -1,7 +1,7 @@
 # rivet-container: containers demuxed inside the wasm
 
-`rivet` (https://github.com/rivet-transcoder/rivet) is the org's transcoder
-library. Its `rivet-container` crate demuxes MP4/MOV, fragmented MP4 (moof/trun,
+`rivet` (https://github.com/rivet-transcoder/rivet) is an open-source
+transcoding library in Rust. Its `rivet-container` crate demuxes MP4/MOV, fragmented MP4 (moof/trun,
 i.e. CMAF), Matroska/WebM, MPEG-TS and AVI, and hands out video samples as
 codec-native bitstreams — raw OBUs for AV1 — with pts and duration:
 

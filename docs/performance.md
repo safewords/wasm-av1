@@ -87,8 +87,8 @@ Chromium takes ~1 ms — about 4× slower — with the same correctness.
 
 Read: single-threaded software AV1 in wasm is now real-time at 1080p on a
 laptop and comfortable at 720p. An old phone is 3–8× slower than this laptop,
-so the frontend plan (docs/frontend-integration.md) starts the fallback on
-the 360p/480p rung and steps up on measurement.
+so a player should start the fallback on the 360p/480p rung and step up on
+measurement (docs/integration.md).
 
 ## YUV → RGBA (the explicit simd128 path in `convert.rs`)
 

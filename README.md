@@ -6,12 +6,13 @@ compiled to WebAssembly, in **baseline**, **SIMD128** and **threads** builds
 the small streaming API that [GoogleChromeLabs/wasm-av1] put in front of
 libaom in 2018 — ported from C to Rust here. Containers (MP4, fragmented MP4 / CMAF,
 WebM/MKV, MPEG-TS) are demuxed inside the same wasm by [rivet]'s
-`rivet-container`, the org's own transcoder library.
+`rivet-container` crate.
 
-Why: lewd.net serves AV1. Devices without an AV1 hardware decoder — the older
-phones and laptops this is for — get a WebAssembly software decoder that the
-browser JIT compiles to NEON/SSE where the SIMD build is used, instead of a
-fallback rung in another codec.
+Why: a site that serves AV1 wants it to play everywhere. Devices without an
+AV1 decoder — older phones and laptops, and Safari before AV1 hardware — get
+a WebAssembly software decoder that the browser JIT compiles to NEON/SSE
+where the SIMD build is used, and that spreads over the cores where the page
+allows threads, instead of a fallback rung in another codec.
 
 **Nothing upstream is vendored.** rav1d and rivet-container are git
 dependencies (`Cargo.lock` pins the revisions); upstream wasm-av1 checked all
@@ -64,28 +65,33 @@ WebGL uploads the planes and does YUV→RGB in the shader; 2D uses the wasm
 RGBA conversion — and `HlsAv1Video`: HLS master/media playlists → CMAF init +
 segments (demuxed by rivet inside the wasm, no decoder reset between
 segments) → canvas, clocked by a `<video>` that plays the audio rendition.
-That last one is the shape lewd-frontend needs (see `WASM_AV1_FALLBACK.md`
-there). The demo page (`npm run serve`, then http://localhost:8080/demo/)
-exercises the file paths.
+That last one is the shape a site with an existing HLS player needs — see
+[docs/integration.md](docs/integration.md) for the decision, the pipeline,
+rung selection, threads/isolation headers and serving. The demo page
+(`npm run serve`, then http://localhost:8080/demo/) exercises the file paths.
 
 ## Consuming it
 
-Releases (`v*` tags → `.github/workflows/release.yml`) publish public,
-unauthenticated artefacts on the GitHub Release:
-
-```json
-"@safewords/wasm-av1": "https://github.com/safewords/wasm-av1/releases/download/v0.2.0/safewords-wasm-av1-0.2.0.tgz"
+```bash
+npm install @safewords/wasm-av1
 ```
 
-That tarball is `npm pack` of this package (`js/` + `pkg/`), so
-`import { … } from '@safewords/wasm-av1'` works, and `pkg/` is there to copy
-into your static assets (the `.wasm` must be served as files, not bundled —
-pass `baseUrl` to `loadWasmAv1`/`Av1Player`/`HlsAv1Video`). For the Worker,
-either let your bundler pick up `new Worker(new URL('./worker.js', import.meta.url))`
-or — more predictably — serve `js/` statically too and pass
-`workerUrl: '<baseUrl>js/worker.js'` (its imports are relative). `wasm-av1-pkg-<ver>.zip`
-is `pkg/` alone for non-npm consumers. `github:safewords/wasm-av1#v0.2.0`
-works too (the repo is public and `pkg/` is committed).
+The package is `js/` (the ESM API) + `pkg/` (the built `.wasm` variants and
+their glue) + `docs/`. `pkg/` must be served as static files, not bundled —
+copy it into your assets and pass `baseUrl` to
+`loadWasmAv1`/`Av1Player`/`HlsAv1Video`. For the Worker, either let your
+bundler pick up `new Worker(new URL('./worker.js', import.meta.url))` or —
+more predictably — serve `js/` statically too and pass
+`workerUrl: '<baseUrl>js/worker.js'` (its imports are relative).
+
+Every `v*` tag is built, tested and published by `.github/workflows/release.yml`:
+to npm (with provenance), and on the GitHub Release as public, unauthenticated
+artefacts for consumers without a registry —
+`safewords-wasm-av1-<ver>.tgz` (the same `npm pack`, installable by URL:
+`"@safewords/wasm-av1": "https://github.com/safewords/wasm-av1/releases/download/v<ver>/safewords-wasm-av1-<ver>.tgz"`),
+`wasm-av1-pkg-<ver>.zip` (`pkg/` alone) and `SHA256SUMS`.
+`github:safewords/wasm-av1#v<ver>` works too (the repo is public and `pkg/`
+is committed).
 
 ## Building
 
@@ -93,7 +99,7 @@ works too (the repo is public and `pkg/` is committed).
 rustup target add wasm32-unknown-unknown            # rust-toolchain.toml pins 1.96
 cargo install wasm-bindgen-cli --version 0.2.127 --locked   # must match Cargo.lock
 scoop install binaryen   # or apt/brew — wasm-opt, optional (~15% smaller)
-scripts/build.sh                                    # → pkg/baseline, pkg/simd, pkg/manifest.json
+scripts/build.sh                                    # → pkg/{baseline,simd,threads,simd-threads}, pkg/thread-worker.js, pkg/manifest.json
 ```
 
 `FEATURES=bitdepth_8 scripts/build.sh` drops 10/12-bit support for a smaller
@@ -107,7 +113,8 @@ demuxers.
 | `cargo test --release` | Native: IVF parser, geometry, colour conversion against a float reference; every fixture in `testdata/` decodes to **the same MD5 libdav1d and libaom produce** (8-bit, 10-bit, 4:4:4, mono, film grain, odd 177×99); push mode ≡ IVF mode; MP4/fMP4/WebM via rivet ≡ IVF. |
 | `cargo test --release --target wasm32-unknown-unknown --test wasm_convert` (± `RUSTFLAGS=-C target-feature=+simd128`) | Inside wasm, in Node: the RGBA dispatch equals the scalar path on 55 shape/matrix combinations — the SIMD build's v128 code included. |
 | `node --test test/decode.test.mjs` (after `scripts/build.sh`) | The built `.wasm`, both variants, same MD5s through the wasm-bindgen surface (so the SIMD kernels are bit-exact too); SIMD and baseline RGBA **byte-identical**; container path; CMAF segments pushed one by one; ms/frame. |
-| `node test/browser.mjs` (needs Playwright) | Headless Chromium + Firefox × {baseline, simd} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM, HLS/CMAF via `HlsAv1Video`}: every frame shown, correctly paced, pixels on the canvas — 26 combinations. |
+| `node test/browser.mjs` (needs Playwright — `PLAYWRIGHT_DIR` or a local install) | Headless Chromium + Firefox + WebKit × {baseline, simd, threads, simd-threads} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM, HLS/CMAF via `HlsAv1Video`}: every frame shown, correctly paced, pixels on the canvas, the thread count that ran — 54 combinations, on a cross-origin-isolated harness page. |
+| `node scripts/bench-browser.mjs` | Decode speed per thread count in the real engines (the threads table above), same frame hash in every configuration. |
 | `scripts/bench.mjs` | Decode speed on real 360p/720p/1080p clips (`scripts/fetch-samples.sh`), with libdav1d MD5 check. |
 
 `scripts/make-fixtures.sh` regenerates `testdata/` with ffmpeg (libaom encode,
@@ -155,7 +162,7 @@ js/               loader, detect, decoder, render, worker, player, hls, thread-w
 examples/decode_ivf.rs   native CLI (upstream test.c) — MD5, frame dumps, PPM, timings
 tests/, test/     native and Node tests;  test/browser.mjs the Playwright matrix (Chromium, Firefox, WebKit)
 scripts/          build.sh, bench.mjs (Node), bench-browser.mjs (threads, in the browsers), serve.mjs
-docs/             rav1d.md, rivet.md, performance.md, frontend-integration.md
+docs/             rav1d.md, rivet.md, performance.md, integration.md
 ```
 
 Licence: Apache-2.0 (as upstream). See NOTICE for what is linked and under what.

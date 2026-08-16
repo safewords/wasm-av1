@@ -84,6 +84,12 @@ jobs:
           if git diff --quiet -- pkg/; then echo "pkg/ matches this build"; else echo "::warning::committed pkg/ differs from this build (expected across OSes; scripts/build.sh regenerates it)"; git diff --stat -- pkg/; fi
       - name: node tests against the built wasm
         run: node --test test/decode.test.mjs
+      # What `npm publish` would ship (release.yml publishes on a v* tag):
+      # package.json must be valid for the registry and the file list complete.
+      - name: npm publish --dry-run
+        run: |
+          npm publish --dry-run --access public 2>&1 | tail -40
+          npm pack --dry-run --json | node -e "const [p]=JSON.parse(require('fs').readFileSync(0,'utf8')); const need=['js/index.js','js/worker.js','js/thread-worker.js','pkg/manifest.json','pkg/thread-worker.js','pkg/baseline/wasm_av1_bg.wasm','pkg/simd/wasm_av1_bg.wasm','pkg/threads/wasm_av1_bg.wasm','pkg/simd-threads/wasm_av1_bg.wasm','README.md','LICENSE','NOTICE']; const have=new Set(p.files.map(f=>f.path)); const missing=need.filter(f=>!have.has(f)); if(missing.length){console.error('missing from the npm package:',missing);process.exit(1)} console.log(p.name+'@'+p.version, p.entryCount+' files,', (p.size/1e6).toFixed(1)+' MB packed')"
       - name: sizes
         run: |
           cat pkg/manifest.json

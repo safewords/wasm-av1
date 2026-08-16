@@ -9,8 +9,8 @@ decode-av1.c, blob-api.c, yuv-to-rgb.c, draw-image.js and index.html.
 
 It links, but does not include, the following at build time:
   rav1d            https://github.com/memorysafety/rav1d       BSD-2-Clause
-                   (via https://github.com/safewords/rav1d, branch wasm32-unknown-unknown)
+                   (via https://github.com/safewords/rav1d, branch main — see docs/rav1d.md)
   rivet-container  https://github.com/rivet-transcoder/rivet   Open Encoding Attribution License 1.0
-                   (optional, feature `container`; branch wasm32-demux)
+                   (optional, feature `container`; branch develop — see docs/rivet.md)
 Their licence texts ship with their sources; a distribution that bundles a
 built .wasm carries their notices as their licences require.

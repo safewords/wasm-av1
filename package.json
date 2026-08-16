@@ -1,27 +1,61 @@
 {
   "name": "@safewords/wasm-av1",
-  "version": "0.2.0",
-  "description": "AV1 decoding for the browser: rav1d compiled to WebAssembly (baseline, SIMD, threads), with a small streaming API. Rust port of GoogleChromeLabs/wasm-av1.",
+  "version": "0.2.1",
+  "description": "AV1 decoding for the browser: rav1d compiled to WebAssembly (baseline, SIMD and multi-threaded builds), with a small streaming API, HLS/CMAF glue and WebGL rendering. A Rust port of GoogleChromeLabs/wasm-av1.",
   "license": "Apache-2.0",
-  "private": true,
   "type": "module",
   "main": "./js/index.js",
   "exports": {
     ".": "./js/index.js",
     "./worker": "./js/worker.js",
-    "./pkg/*": "./pkg/*"
+    "./js/*": "./js/*",
+    "./pkg/*": "./pkg/*",
+    "./package.json": "./package.json"
   },
   "files": [
     "js",
     "pkg",
+    "docs",
     "README.md",
     "LICENSE",
     "NOTICE"
   ],
+  "sideEffects": [
+    "./js/worker.js",
+    "./js/thread-worker.js"
+  ],
+  "keywords": [
+    "av1",
+    "wasm",
+    "webassembly",
+    "decoder",
+    "video",
+    "rav1d",
+    "dav1d",
+    "hls",
+    "cmaf",
+    "simd",
+    "threads",
+    "webgl"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/safewords/wasm-av1.git"
+  },
+  "homepage": "https://github.com/safewords/wasm-av1#readme",
+  "bugs": {
+    "url": "https://github.com/safewords/wasm-av1/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "bash scripts/build.sh",
     "test": "bash scripts/build.sh && node --test test/decode.test.mjs",
     "test:node": "node --test test/decode.test.mjs",
+    "test:browser": "node test/browser.mjs",
+    "bench:browser": "node scripts/bench-browser.mjs",
     "serve": "node scripts/serve.mjs",
     "bench": "node scripts/bench.mjs"
   },

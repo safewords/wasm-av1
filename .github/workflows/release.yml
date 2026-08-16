@@ -1,11 +1,23 @@
 # Cut a release: on a `v*` tag (or by hand), build the wasm variants from
-# that tag, run the tests against them, and publish the artefacts on the
-# GitHub Release — public, unauthenticated URLs a frontend build can pull:
+# that tag, run the tests against them, publish the artefacts on the GitHub
+# Release, and publish the package to npm.
 #
-#   safewords-wasm-av1-<ver>.tgz    `npm pack` of the package: js/ + pkg/ + docs — install it with
+# GitHub Release (public, unauthenticated URLs):
+#   safewords-wasm-av1-<ver>.tgz    `npm pack` of the package: js/ + pkg/ + docs — installable by URL:
 #                                   "@safewords/wasm-av1": "https://github.com/safewords/wasm-av1/releases/download/v<ver>/safewords-wasm-av1-<ver>.tgz"
 #   wasm-av1-pkg-<ver>.zip          just pkg/ (the four .wasm variants, glue, thread-worker.js), for non-npm consumers
 #   SHA256SUMS
+#
+# npm (`npm install @safewords/wasm-av1`), with provenance. Credentials, in
+# order of preference:
+#   1. npm trusted publishing (OIDC, no secret): on npmjs.com, package settings →
+#      Trusted publisher → GitHub Actions, repository safewords/wasm-av1, workflow
+#      release.yml. Needs the package to exist (first publish by token or by hand).
+#   2. an NPM_TOKEN repository secret (granular access token, read+write on
+#      packages for the @safewords scope, "bypass 2FA" so automation can publish).
+# With neither configured the npm step warns and the release still succeeds;
+# re-run the workflow for the tag once they are (workflow_dispatch below).
+# Publishing is idempotent: a version already on npm is skipped.
 #
 # The tag must match package.json / Cargo.toml (`v0.1.0` ↔ `0.1.0`).
 name: release
@@ -21,6 +33,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # npm provenance attestations + trusted publishing
 
 env:
   CARGO_TERM_COLOR: always
@@ -75,6 +88,12 @@ jobs:
           {
             echo "AV1 decoding for the browser: rav1d + wasm SIMD128 kernels + rivet demux; baseline, SIMD and threads builds (rav1d's worker threads as Web Workers on a cross-origin-isolated page). See README.md."
             echo
+            echo '```'
+            echo "npm install @safewords/wasm-av1@${VER}"
+            echo '```'
+            echo
+            echo "or by URL, without a registry:"
+            echo
             echo '```json'
             echo "\"@safewords/wasm-av1\": \"https://github.com/${{ github.repository }}/releases/download/${{ steps.v.outputs.tag }}/safewords-wasm-av1-${VER}.tgz\""
             echo '```'
@@ -94,3 +113,28 @@ jobs:
           else
             gh release create "$TAG" --title "wasm-av1 $TAG" --notes-file RELEASE_NOTES.md safewords-wasm-av1-${VER}.tgz wasm-av1-pkg-${VER}.zip SHA256SUMS
           fi
+      - name: publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VER=${{ steps.v.outputs.ver }}; TAG=${{ steps.v.outputs.tag }}
+          NAME=$(node -p "require('./package.json').name")
+          # Trusted publishing (OIDC, tokenless) needs npm >= 11.5.1; Node 22 ships 10.x.
+          npm install -g npm@latest >/dev/null 2>&1 || true
+          echo "npm $(npm --version)"
+          if [ "$(npm view "${NAME}@${VER}" version 2>/dev/null)" = "${VER}" ]; then
+            echo "::notice::${NAME}@${VER} is already on npm; nothing to publish"
+            exit 0
+          fi
+          if [ -n "${NPM_TOKEN}" ]; then
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$HOME/.npmrc"
+            echo "publishing ${NAME}@${VER} with NPM_TOKEN"
+            npm publish --provenance --access public
+          else
+            echo "no NPM_TOKEN secret; publishing ${NAME}@${VER} through npm trusted publishing (OIDC)"
+            if ! npm publish --provenance --access public; then
+              echo "::warning::npm publish of ${NAME}@${VER} failed and no NPM_TOKEN is set. Either configure a trusted publisher for ${NAME} on npmjs.com (GitHub Actions: repository ${{ github.repository }}, workflow release.yml) or add an NPM_TOKEN repository secret, then re-run this workflow for ${TAG} (Actions → release → Run workflow). The GitHub Release above is complete."
+              exit 0
+            fi
+          fi
+          echo "published: https://www.npmjs.com/package/${NAME}/v/${VER}"

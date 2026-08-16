@@ -561,7 +561,7 @@ function __wbg_get_imports(memory) {
             const ret = Error(getStringFromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg___wasmAv1SpawnThread_d3950ef1ef0923d3: function() { return handleError(function (arg0, arg1, arg2) {
+        __wbg___wasmAv1SpawnThread_bbb96208b360bc32: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = globalThis.__wasmAv1SpawnThread(arg0, arg1, arg2 >>> 0);
             return ret;
         }, arguments); },

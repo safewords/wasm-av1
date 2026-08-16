@@ -4,9 +4,9 @@
 // decode budget per tick, catch-up by dropping late frames, and either an
 // in-thread `Decoder` or a `WorkerDecoder` behind the same loop.
 //
-// It is deliberately small: it exists to prove the pipeline and to give the
-// lewd-frontend integration a reference for the pacing/decode-budget/renderer
-// choices, not to be a full player (no audio, no seeking UI).
+// It is deliberately small: it exists to prove the pipeline and to give an
+// integration a reference for the pacing/decode-budget/renderer choices, not
+// to be a full player (no audio, no seeking UI). `HlsAv1Video` builds on it.
 
 import { Decoder, Run } from './decoder.js';
 import { loadWasmAv1 } from './loader.js';

@@ -24,8 +24,9 @@ const maxFrames = Number(opt('--frames', 300));
 const threadCounts = opt('--threads', '1,2,4,8').split(',').map(Number);
 const browsers = opt('--browsers', 'chromium,firefox').split(',');
 
+// A Playwright install: PLAYWRIGHT_DIR, else this package's node_modules.
 const pwDir = process.env.PLAYWRIGHT_DIR
-  ?? [join(root, 'node_modules', 'playwright'), join(root, '..', '..', 'lewd', 'lewd-frontend', 'node_modules', 'playwright')]
+  ?? [join(root, 'node_modules', 'playwright')]
     .find((p) => { try { statSync(p); return true; } catch { return false; } })
   ?? 'playwright';
 const pw = await import(pathToFileURL(join(pwDir, 'index.mjs')).href);

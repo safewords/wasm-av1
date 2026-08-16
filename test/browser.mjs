@@ -7,9 +7,9 @@
 // threads variants can run (SharedArrayBuffer); the thread combos assert
 // that rav1d really ran with N worker threads (`stats.threads`).
 //
-// Not part of `npm test` (needs a Playwright install). Run with:
+// Not part of `npm test` (needs a Playwright install with browsers). Run with
 //   PLAYWRIGHT_DIR=/path/to/node_modules/playwright node test/browser.mjs
-// or from lewd-frontend's checkout, which has Playwright installed.
+// or `npm i -D playwright && npx playwright install` here first.
 
 import { createServer } from 'node:http';
 import { createReadStream, statSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -17,10 +17,9 @@ import { extname, join, normalize, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-// A Playwright install: PLAYWRIGHT_DIR, else this package's node_modules, else
-// the sibling lewd-frontend checkout in devenv (which has one).
+// A Playwright install: PLAYWRIGHT_DIR, else this package's node_modules.
 const pwDir = process.env.PLAYWRIGHT_DIR
-  ?? [join(root, 'node_modules', 'playwright'), join(root, '..', '..', 'lewd', 'lewd-frontend', 'node_modules', 'playwright')]
+  ?? [join(root, 'node_modules', 'playwright')]
     .find((p) => { try { statSync(p); return true; } catch { return false; } })
   ?? 'playwright';
 const { chromium, firefox, webkit } = await import(pathToFileURL(join(pwDir, 'index.mjs')).href);

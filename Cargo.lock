@@ -793,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-av1"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bytes",
  "md-5",

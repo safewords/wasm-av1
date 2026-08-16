@@ -61,8 +61,8 @@ ls -la testdata/*.ivf
 
 # Container fixtures for the rivet-container path: the same AV1 stream as
 # testsrc-320x180-8bit.ivf remuxed (no re-encode) into a plain MP4, a
-# fragmented/CMAF-style MP4 (init + moof/mdat per keyframe, the shape lewd.net
-# serves), and WebM. Decoding any of them must reproduce that fixture's MD5.
+# fragmented/CMAF-style MP4 (init + moof/mdat per keyframe, the shape HLS/CMAF
+# ladders serve), and WebM. Decoding any of them must reproduce that fixture's MD5.
 src=testdata/testsrc-320x180-8bit.ivf
 ffmpeg -hide_banner -loglevel error -y -i "$src" -c:v copy -movflags +faststart testdata/testsrc-320x180-8bit.mp4
 ffmpeg -hide_banner -loglevel error -y -i "$src" -c:v copy -f mp4 -movflags frag_keyframe+empty_moov+default_base_moof+dash testdata/testsrc-320x180-8bit.fmp4

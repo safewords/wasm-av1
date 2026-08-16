@@ -1,10 +1,10 @@
 # Prove the decoder: native tests against the ffmpeg reference MD5s, then the
 # two wasm variants driven from Node, then the wasm build artefacts.
 #
-# Private repository, so the fleet runners (safewords/actions-runner-image:
-# rust stable + wasm32 target + node preinstalled). The wasm-bindgen CLI is
+# Public repository, so GitHub's hosted runners. The wasm-bindgen CLI is
 # pinned to the crate version in Cargo.lock; binaryen comes from GitHub
-# releases so wasm-opt runs the same version everywhere.
+# releases so wasm-opt runs the same version everywhere. Releases are cut by
+# release.yml on a `v*` tag, which reuses the same steps.
 name: wasm-av1
 
 on:
@@ -25,12 +25,10 @@ env:
 jobs:
   native:
     name: cargo fmt, clippy, test
-    runs-on: safewords-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - name: Build tools (bare ARC runner image)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential pkg-config
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: rustfmt, clippy
@@ -45,18 +43,15 @@ jobs:
 
   wasm:
     name: build both variants, test them in Node
-    runs-on: safewords-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
-      - name: Build tools (bare ARC runner image)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential pkg-config
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: wasm32-unknown-unknown
       - uses: mozilla-actions/sccache-action@v0.0.9
-      # The image's apt Node is too old for the wasm-bindgen-test harness (V8
-      # fatal); the tests are written and verified against Node 22.
+      # The tests are written and verified against Node 22.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -78,6 +73,12 @@ jobs:
           RUSTFLAGS="-C target-feature=+simd128" cargo test --release --target wasm32-unknown-unknown --test wasm_convert --target-dir target/wasm-test-simd
       - name: build baseline + simd
         run: bash scripts/build.sh
+      # Informational: a Windows-built pkg/ and this Linux build differ in the
+      # source paths rustc embeds in panic strings, so this cannot be a hard
+      # check. What ships is release.yml's own build of the tag.
+      - name: does the committed pkg/ match this build?
+        run: |
+          if git diff --quiet -- pkg/; then echo "pkg/ matches this build"; else echo "::warning::committed pkg/ differs from this build (expected across OSes; scripts/build.sh regenerates it)"; git diff --stat -- pkg/; fi
       - name: node tests against the built wasm
         run: node --test test/decode.test.mjs
       - name: sizes

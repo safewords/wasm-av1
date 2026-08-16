@@ -52,6 +52,22 @@ That last one is the shape lewd-frontend needs (see `WASM_AV1_FALLBACK.md`
 there). The demo page (`npm run serve`, then http://localhost:8080/demo/)
 exercises the file paths.
 
+## Consuming it
+
+Releases (`v*` tags → `.github/workflows/release.yml`) publish public,
+unauthenticated artefacts on the GitHub Release:
+
+```json
+"@safewords/wasm-av1": "https://github.com/safewords/wasm-av1/releases/download/v0.1.0/safewords-wasm-av1-0.1.0.tgz"
+```
+
+That tarball is `npm pack` of this package (`js/` + `pkg/`), so
+`import { … } from '@safewords/wasm-av1'` works, and `pkg/` is there to copy
+into your static assets (the `.wasm` must be served as files, not bundled —
+pass `baseUrl` to `loadWasmAv1`/`Av1Player`/`HlsAv1Video`). `wasm-av1-pkg-<ver>.zip`
+is `pkg/` alone for non-npm consumers. `github:safewords/wasm-av1#v0.1.0`
+works too (the repo is public and `pkg/` is committed).
+
 ## Building
 
 ```bash

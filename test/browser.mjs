@@ -13,8 +13,12 @@ import { extname, join, normalize, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// A Playwright install: PLAYWRIGHT_DIR, else this package's node_modules, else
+// the sibling lewd-frontend checkout in devenv (which has one).
 const pwDir = process.env.PLAYWRIGHT_DIR
-  ?? 'C:/Users/elyci/PhpstormProjects/devenv/lewd/lewd-frontend/node_modules/playwright';
+  ?? [path.join(root, 'node_modules', 'playwright'), path.join(root, '..', '..', 'lewd', 'lewd-frontend', 'node_modules', 'playwright')]
+    .find((p) => { try { statSync(p); return true; } catch { return false; } })
+  ?? 'playwright';
 const { chromium, firefox } = await import(pathToFileURL(join(pwDir, 'index.mjs')).href);
 
 // --- static server (same as scripts/serve.mjs, in-process) ------------------

@@ -148,11 +148,15 @@ export class Decoder {
    * @param {object} [opts]
    * @param {number} [opts.maxBuffered=10]  decoded frames kept ahead
    * @param {boolean} [opts.applyGrain=true]  film-grain synthesis
+   * @param {number} [opts.threads=1]  rav1d worker threads; more than 1 only on a `threads` runtime
+   *                                   (`runtime.threads`), and only from inside a Worker — see `threads` for what applied
    */
-  constructor(runtime, { maxBuffered = 10, applyGrain = true } = {}) {
+  constructor(runtime, { maxBuffered = 10, applyGrain = true, threads = 1 } = {}) {
     this.rt = runtime;
-    this.raw = new runtime.mod.Av1Decoder(maxBuffered, applyGrain);
+    this.raw = new runtime.mod.Av1Decoder(maxBuffered, applyGrain, Math.max(1, threads | 0));
     this.maxBuffered = maxBuffered;
+    /** Worker threads actually running (1 unless the runtime has threads and more were asked). */
+    this.threads = typeof this.raw.threads === 'function' ? this.raw.threads() : 1;
     this._generation = 0;
     this._current = null;
     /** Seconds per pts tick; set from the IVF header, or by `setTimeBase()` in push mode. */

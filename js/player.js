@@ -13,6 +13,16 @@ import { loadWasmAv1 } from './loader.js';
 import { createRenderer, WebGLRenderer } from './render.js';
 import { WorkerDecoder } from './worker-client.js';
 
+/** `threads` option → a count. 'auto' is one per logical core, capped at 8 (rav1d spreads
+ * frame + tile work over them; beyond the core count they only contend). */
+export function resolveThreads(threads) {
+  if (threads === 'auto') {
+    const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 0;
+    return Math.max(1, Math.min(hc || 2, 8));
+  }
+  return Math.max(1, threads | 0);
+}
+
 export class Av1Player {
   /**
    * @param {HTMLCanvasElement} canvas
@@ -21,7 +31,10 @@ export class Av1Player {
    * @param {boolean} [opts.worker=false]      decode in a Web Worker
    * @param {string|URL} [opts.workerUrl]      the worker script (default: ./worker.js next to this file, resolved by the bundler);
    *                                           set it when serving js/ statically, e.g. `${baseUrl}js/worker.js`
-   * @param {'auto'|'simd'|'baseline'} [opts.variant='auto']
+   * @param {'auto'|'simd'|'baseline'|'threads'|'simd-threads'} [opts.variant='auto']
+   * @param {number|'auto'} [opts.threads=1]   rav1d worker threads (frame + tile threading), each a Worker on shared
+   *                                           memory: needs `worker: true` and a cross-origin-isolated page (COOP/COEP),
+   *                                           else 1. 'auto' = one per logical core, at most 8. `stats.threads` says what ran.
    * @param {string|URL} [opts.baseUrl]        pkg/ directory
    * @param {number} [opts.maxBuffered=10]
    * @param {boolean} [opts.applyGrain=true]
@@ -32,7 +45,7 @@ export class Av1Player {
    */
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
-    this.opts = { renderer: 'auto', worker: false, variant: 'auto', maxBuffered: 10, applyGrain: true, decodeBudgetMs: 8, fallbackFps: 24, ...opts };
+    this.opts = { renderer: 'auto', worker: false, variant: 'auto', threads: 1, maxBuffered: 10, applyGrain: true, decodeBudgetMs: 8, fallbackFps: 24, ...opts };
     this.renderer = createRenderer(canvas, this.opts.renderer);
     // instanceof, not constructor.name: minifiers rename classes, and a wrong
     // answer here also makes the Worker convert RGBA the WebGL path never uses.
@@ -48,7 +61,7 @@ export class Av1Player {
   _resetStats() {
     this.stats = {
       framesShown: 0, framesDropped: 0, decodeMs: 0, drawMs: 0, maxRunMs: 0, runs: 0,
-      buffered: 0, fps: 0, variant: null, simd: null, renderer: this.rendererKind, drawPath: null, worker: this.opts.worker,
+      buffered: 0, fps: 0, variant: null, simd: null, threads: 1, renderer: this.rendererKind, drawPath: null, worker: this.opts.worker,
       decoder: null,
     };
     this._fpsWindow = [];
@@ -66,12 +79,13 @@ export class Av1Player {
       this.src = new WorkerDecoder({
         variant: this.opts.variant, baseUrl: this.opts.baseUrl, maxBuffered: this.opts.maxBuffered,
         applyGrain: this.opts.applyGrain, output: this.rendererKind === 'webgl' ? 'planes' : 'rgba',
-        workerUrl: this.opts.workerUrl, prefetch: this.opts.prefetch,
+        workerUrl: this.opts.workerUrl, prefetch: this.opts.prefetch, threads: resolveThreads(this.opts.threads),
       });
       this.src.onerror = (e) => this.onerror?.(e);
       const r = await this.src.ready;
       this.stats.variant = r.variant;
       this.stats.simd = r.simd;
+      this.stats.threads = r.threads ?? 1;
     } else {
       this.rt = await loadWasmAv1({ variant: this.opts.variant, baseUrl: this.opts.baseUrl });
       this.src = new Decoder(this.rt, { maxBuffered: this.opts.maxBuffered, applyGrain: this.opts.applyGrain });
@@ -93,6 +107,7 @@ export class Av1Player {
     this._resetStats();
     this.stats.variant = this.src.variant ?? this.rt?.variant ?? null;
     this.stats.simd = this.src.simd ?? this.rt?.simd ?? null;
+    this.stats.threads = this.src.threads ?? 1;
     this.src.setSource(bytes);
     this.info = this.opts.worker ? await this._waitInfo() : this.src.info();
     this._timeBase = this.info?.timeBase ?? null;
@@ -118,6 +133,7 @@ export class Av1Player {
     this._resetStats();
     this.stats.variant = this.src.variant ?? this.rt?.variant ?? null;
     this.stats.simd = this.src.simd ?? this.rt?.simd ?? null;
+    this.stats.threads = this.src.threads ?? 1;
     this._timeBase = timeBase ?? null;
     if (!this.opts.worker && timeBase != null) this.src.setTimeBase(timeBase);
     this._frameIndex = 0;

@@ -59,7 +59,13 @@ frame duration; pick the highest rung whose measured decode ≤ ~60 % of the
 frame time on that device. On this laptop the SIMD build does 720p at ~110 fps
 and 1080p at ~60 fps single-threaded (docs/performance.md); an old phone is
 3–8× slower, so expect 480p/720p there. That is still AV1 playing where today
-nothing plays.
+nothing plays. With the threads builds (`threads: 'auto'`, needs the page
+cross-origin isolated — `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` on the document, which on
+Cloudflare Pages is a `_headers` file) 1080p decodes 3–5× faster on 4–8
+cores, and the worst-frame time — what shows as a stutter — comes down with
+it. Without the headers nothing breaks: `detectThreads()` is false and the
+single-thread build loads.
 
 ## Loading
 

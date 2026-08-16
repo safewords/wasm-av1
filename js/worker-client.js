@@ -2,6 +2,8 @@
 // but frames arrive asynchronously and are plain transferable objects
 // (`Frame.toTransferable()`), which the renderers accept as-is.
 
+import { spawnThreadWorker } from './loader.js';
+
 export class WorkerDecoder {
   /**
    * @param {object} [opts]
@@ -11,6 +13,8 @@ export class WorkerDecoder {
    * @param {number} [opts.prefetch=6]            frames the worker keeps in flight to the page
    * @param {number} [opts.maxBuffered=10]        frames the wasm ring holds inside the worker
    * @param {boolean} [opts.applyGrain=true]
+   * @param {number} [opts.threads=1]             rav1d worker threads (each a Worker on shared memory); takes effect only
+   *                                              on a cross-origin-isolated page — see `ready` / `threads` for what applied
    * @param {string|URL} [opts.workerUrl]         defaults to ./worker.js next to this file
    */
   constructor(opts = {}) {
@@ -49,6 +53,7 @@ export class WorkerDecoder {
       prefetch: opts.prefetch ?? 6,
       maxBuffered: opts.maxBuffered ?? 10,
       applyGrain: opts.applyGrain ?? true,
+      threads: opts.threads ?? 1,
     });
   }
 
@@ -57,8 +62,15 @@ export class WorkerDecoder {
       case 'ready':
         this.variant = m.variant;
         this.simd = m.simd;
+        this.threads = m.threads ?? 1;
         this.version = m.version;
-        this._resolveReady({ variant: m.variant, simd: m.simd, version: m.version });
+        this._resolveReady({ variant: m.variant, simd: m.simd, threads: this.threads, version: m.version });
+        break;
+      case 'spawnThread':
+        // A rav1d worker thread for the decode Worker's decoder: it asks us
+        // because it is about to block waiting for it (see loader.js). The
+        // compiled module and the shared memory came along.
+        spawnThreadWorker(m);
         break;
       case 'info':
         this.info = m.info;

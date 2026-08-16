@@ -72,9 +72,11 @@ export class Av1Decoder {
     /**
      * `maxBuffered` frames kept ahead (default 10, upstream's
      * `NUM_FRAMES_BUFFERED`); `applyGrain` toggles film-grain synthesis
-     * (default true).
+     * (default true); `threads` rav1d worker threads (default 1; more only
+     * on a build where `threadsSupported()` is true, else forced to 1 — see
+     * `threads()` for what was applied).
      */
-    constructor(max_buffered?: number | null, apply_grain?: boolean | null);
+    constructor(max_buffered?: number | null, apply_grain?: boolean | null, threads?: number | null);
     /**
      * Make the oldest buffered frame current; false if none is buffered.
      */
@@ -137,6 +139,11 @@ export class Av1Decoder {
      */
     setSourceIvf(data: Uint8Array): void;
     stats(): DecoderStats;
+    /**
+     * Worker threads this decoder runs with (1 unless the build supports
+     * threads and more were asked for).
+     */
+    threads(): number;
     timeBaseDen(): number;
     /**
      * Time base numerator: `seconds = pts * num / den` for frame pts. From
@@ -185,6 +192,13 @@ export function containerSupport(): boolean;
 export function simdEnabled(): boolean;
 
 /**
+ * True when this .wasm was built with atomics + shared memory and can run
+ * rav1d's worker threads as Web Workers (`threads` > 1 in the constructor).
+ * Needs a cross-origin-isolated page and the decoder in a Worker.
+ */
+export function threadsSupported(): boolean;
+
+/**
  * Crate version.
  */
 export function version(): string;
@@ -225,7 +239,7 @@ export interface InitOutput {
     readonly av1decoder_framesBuffered: (a: number) => number;
     readonly av1decoder_hasFrame: (a: number) => number;
     readonly av1decoder_height: (a: number) => number;
-    readonly av1decoder_new: (a: number, b: number) => [number, number, number];
+    readonly av1decoder_new: (a: number, b: number, c: number) => [number, number, number];
     readonly av1decoder_nextFrame: (a: number) => number;
     readonly av1decoder_peekPts: (a: number) => number;
     readonly av1decoder_pendingInput: (a: number) => number;
@@ -243,10 +257,12 @@ export interface InitOutput {
     readonly av1decoder_setSourceContainer: (a: number, b: number, c: number) => [number, number];
     readonly av1decoder_setSourceIvf: (a: number, b: number, c: number) => [number, number];
     readonly av1decoder_stats: (a: number) => number;
+    readonly av1decoder_threads: (a: number) => number;
     readonly av1decoder_timeBaseDen: (a: number) => number;
     readonly av1decoder_timeBaseNum: (a: number) => number;
     readonly av1decoder_width: (a: number) => number;
     readonly containerSupport: () => number;
+    readonly threadsSupported: () => number;
     readonly version: () => [number, number];
     readonly simdEnabled: () => number;
     readonly dav1d_apply_grain: (a: number, b: number, c: number) => number;

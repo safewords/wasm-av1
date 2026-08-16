@@ -44,8 +44,11 @@ pub struct Config {
     /// Apply film grain synthesis in the decoder (a per-frame CPU cost; the
     /// stream is still valid without it, just cleaner than the encoder meant).
     pub apply_grain: bool,
-    /// Frame threads. Only meaningful natively; on wasm there is one thread
-    /// and this is forced to 1.
+    /// rav1d worker threads (frame + tile threading). Natively any number; on
+    /// wasm only the `threads` build (atomics + shared memory) can run more
+    /// than one and other builds force 1 — see [`crate::THREADS_SUPPORTED`].
+    /// With more than one thread rav1d blocks the calling thread while it
+    /// waits for workers, so on wasm the decoder must live in a Worker.
     pub threads: u32,
 }
 
@@ -197,6 +200,10 @@ pub struct Decoder {
     /// Set after rav1d returned `TryAgain` from `send_data`: it wants pictures
     /// pulled before it will take the rest of that data.
     input_pending: bool,
+    /// A temporal unit went in since the last completed end-of-input drain,
+    /// so rav1d may still hold frames in flight (frame threading). Cleared
+    /// when [`Decoder::drain_in_flight`] finds nothing left.
+    needs_drain: bool,
     /// Size of the most recent decoded frame — what `width()`/`height()`
     /// answer in push mode, where there is no container header to ask.
     last_size: Option<(usize, usize)>,
@@ -209,17 +216,29 @@ pub struct Decoder {
     stats: Stats,
 }
 
-fn open_rav1d(config: &Config) -> Result<rav1d::Decoder, Error> {
-    let mut settings = Settings::new();
-    settings.set_n_threads(if cfg!(target_arch = "wasm32") {
-        1
-    } else {
+/// The thread count a [`Config`] actually gets on this build.
+pub fn effective_threads(config: &Config) -> u32 {
+    if crate::THREADS_SUPPORTED {
         config.threads.max(1)
-    });
+    } else {
+        1
+    }
+}
+
+fn open_rav1d(config: &Config) -> Result<rav1d::Decoder, Error> {
+    let threads = effective_threads(config);
+    #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+    if threads > 1 {
+        crate::threads::install();
+    }
+    let mut settings = Settings::new();
+    settings.set_n_threads(threads);
     settings.set_apply_grain(config.apply_grain);
-    // With one thread, one frame of delay; more only buys anything with
-    // frame threading.
-    settings.set_max_frame_delay(1);
+    // One thread: one frame of delay, nothing to overlap. More: let rav1d
+    // pick its frame-thread count from the thread count (dav1d's default,
+    // ceil(sqrt(n)) capped at 8); frames come out a few later, which the
+    // ring absorbs.
+    settings.set_max_frame_delay(if threads > 1 { 0 } else { 1 });
     rav1d::Decoder::with_settings(&settings).map_err(Error::Open)
 }
 
@@ -234,6 +253,7 @@ impl Decoder {
             current: None,
             drained: true,
             input_pending: false,
+            needs_drain: false,
             last_size: None,
             #[cfg(feature = "container")]
             init_segment: None,
@@ -452,11 +472,16 @@ impl Decoder {
     /// then panic), and it leaves decoded pictures retrievable, both of which
     /// are exactly what a seek must not carry across.
     fn reset_state(&mut self) -> Result<(), Error> {
-        self.inner = open_rav1d(&self.config)?;
+        // rav1d's own flush: drops in-flight and delayed frames and the
+        // headers, keeps the context — and with it the worker threads, which
+        // on wasm are Workers that would otherwise be torn down and
+        // re-spawned on every seek.
+        self.inner.flush();
         self.ring.clear();
         self.current = None;
         self.drained = true;
         self.input_pending = false;
+        self.needs_drain = false;
         Ok(())
     }
 
@@ -475,9 +500,15 @@ impl Decoder {
         }
     }
 
-    /// True when there is nothing left to decode or show.
+    /// True when there is nothing left to decode or show. Settles one
+    /// [`Decoder::run`] after the last input was consumed: that call does the
+    /// end-of-input drain (frames still in flight in rav1d's worker threads).
     pub fn finished(&self) -> bool {
-        self.source_done() && !self.input_pending && self.drained && self.ring.is_empty()
+        self.source_done()
+            && !self.input_pending
+            && self.drained
+            && !self.needs_drain
+            && self.ring.is_empty()
     }
 
     fn header_size(&self) -> Option<(usize, usize)> {
@@ -569,8 +600,15 @@ impl Decoder {
 
         let Some((data, pts)) = next else {
             // Starved. Drain what rav1d still holds so `finished` can settle.
-            self.collect_pictures();
             let source_done = self.source_done();
+            self.collect_pictures();
+            if source_done && self.drained && self.ring.len() < self.config.max_buffered {
+                // End of input: with frame threads there may still be frames
+                // in flight. A second `get_picture` right after a TryAgain is
+                // rav1d's drain — it waits for the next in-flight frame and
+                // returns it, or TryAgain when there is none left.
+                self.drain_in_flight();
+            }
             return Ok(if source_done && self.drained {
                 RunOutcome::EndOfStream
             } else {
@@ -581,6 +619,7 @@ impl Decoder {
         self.stats.temporal_units_in += 1;
         self.stats.bytes_in += data.len() as u64;
         self.drained = false;
+        self.needs_drain = true;
         match self
             .inner
             .send_data(data.into_boxed_slice(), None, Some(pts), None)
@@ -598,16 +637,39 @@ impl Decoder {
         Ok(RunOutcome::Consumed)
     }
 
+    /// End of input: pull frames still in flight in rav1d's worker threads.
+    /// rav1d's `get_picture` waits for one when called again after it said
+    /// TryAgain (its "drain" state, reset by the next `send_data`); this
+    /// keeps pulling until it says TryAgain twice in a row or the ring is
+    /// full. Single-threaded there is never anything in flight and the extra
+    /// call is a cheap TryAgain.
+    fn drain_in_flight(&mut self) {
+        while self.ring.len() < self.config.max_buffered {
+            match self.inner.get_picture() {
+                Ok(pic) => self.push_picture(&pic),
+                Err(_) => {
+                    // TryAgain in drain state: nothing left in flight (an
+                    // error here is a frame that failed; nothing to keep).
+                    self.needs_drain = false;
+                    return;
+                }
+            }
+        }
+        // Ring full; the rest waits for the next call.
+    }
+
+    fn push_picture(&mut self, pic: &rav1d::Picture) {
+        let frame = Frame::from_picture(pic);
+        self.last_size = Some((frame.width, frame.height));
+        self.ring.push_back(frame);
+        self.stats.frames_out += 1;
+    }
+
     /// Move every picture rav1d has ready into the ring, up to capacity.
     fn collect_pictures(&mut self) {
         while self.ring.len() < self.config.max_buffered {
             match self.inner.get_picture() {
-                Ok(pic) => {
-                    let frame = Frame::from_picture(&pic);
-                    self.last_size = Some((frame.width, frame.height));
-                    self.ring.push_back(frame);
-                    self.stats.frames_out += 1;
-                }
+                Ok(pic) => self.push_picture(&pic),
                 Err(Rav1dError::TryAgain) => {
                     self.drained = true;
                     return;

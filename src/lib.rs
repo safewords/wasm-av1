@@ -13,8 +13,12 @@
 //!   in every browser with post-MVP wasm (Chrome 96 / Firefox 89 / Safari 15).
 //! * **wasm32 SIMD**: the same, with `-C target-feature=+simd128`; rav1d's
 //!   inner loops autovectorise and the RGBA conversion has an explicit `v128`
-//!   path. On ARM this is what becomes NEON. `scripts/build.sh` produces both;
-//!   `js/` picks at runtime.
+//!   path. On ARM this is what becomes NEON.
+//! * **wasm32 threads** (each of the above with `+atomics`, shared memory and
+//!   `-Zbuild-std`): rav1d's frame/tile worker threads run as Web Workers on
+//!   the shared memory (see [`threads`]) — needs a cross-origin-isolated page.
+//!
+//! `scripts/build.sh` produces all four; `js/` picks at runtime.
 //!
 //! Module map — each is a piece of the upstream C, named in its docs:
 //!
@@ -34,8 +38,15 @@ pub mod decoder;
 pub mod frame;
 pub mod ivf;
 
+#[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+pub mod threads;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
+
+/// True when this build can run rav1d's worker threads (native, or wasm
+/// with the `atomics` target feature — see [`threads`]).
+pub const THREADS_SUPPORTED: bool =
+    cfg!(any(not(target_arch = "wasm32"), target_feature = "atomics"));
 
 pub use convert::{simd_enabled, yuv_to_rgba, Coefficients};
 #[cfg(feature = "container")]

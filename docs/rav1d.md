@@ -3,13 +3,15 @@
 The decoder is [memorysafety/rav1d](https://github.com/memorysafety/rav1d), the
 Rust port of dav1d (BSD-2-Clause). We take it from
 **`https://github.com/safewords/rav1d`, branch `main`**, which is upstream
-`main` (`d3d1cd6`, 2026-08-14) plus three commits:
+`main` (`d3d1cd6`, 2026-08-14) plus five commits:
 
 | commit | what | upstreamable |
 |---|---|---|
 | [`7546455`](https://github.com/safewords/rav1d/commit/7546455cb20fa82608c7363cf6f229030d80589d) | build for `wasm32-unknown-unknown`: `src/c_types.rs` instead of `libc::{ptrdiff_t,…,E*}` | yes, as is |
 | [`74f87c8`](https://github.com/safewords/rav1d/commit/74f87c8) | `rav1d_submit_frame::on_error` no longer panics when the frame header is already gone (a damaged temporal unit took the whole decoder down; now it is an `Err` and decoding continues, matching libdav1d) | yes, as is |
 | [`55c4d09`](https://github.com/safewords/rav1d/commit/55c4d09) | wasm32 SIMD128 kernels for MC 8-tap, warp 8×8, CDEF and the loop filter (8 bpc), see below | probably, if they take portable-SIMD kernels; otherwise it stays here |
+| [`e051d04`](https://github.com/safewords/rav1d/commit/e051d04) | wasm32 + `atomics`: worker threads through an embedder-registered spawner (`wasm_thread::set_thread_spawner`) — `std::thread::spawn` is unsupported there; the context handshake moves from `park`/`unpark`-by-handle to a condvar (`c_set`) so a thread that starts late (a Worker) still finds it | yes; the condvar handshake alone is a no-op change natively |
+| [`6f780a0`](https://github.com/safewords/rav1d/commit/6f780a0) | `rust_api::Decoder::flush` drops the wrapper's pending input too (as `dav1d_flush` drops `c->in`); `send_data` after a mid-TU flush asserted | yes, as is |
 
 (The first commit is also on the branch `wasm32-unknown-unknown` alone, for a
 minimal upstream PR; `wasm32-simd` holds all three.)
@@ -37,11 +39,17 @@ No type or ABI change anywhere else. `cargo fmt` clean per rav1d's rustfmt.toml.
 
 ## Runtime notes on wasm
 
-- `n_threads` is forced to 1 (`Rav1dContextTaskType::Single`), so rav1d never
-  spawns; `available_parallelism()` failing on wasm falls back to 1 anyway.
-- rav1d's `Decoder::flush()` keeps input it had not finished consuming and
-  `send_data` then panics; a reset here therefore recreates the rav1d instance
-  (`decoder.rs::reset_state`).
+- Without the `atomics` target feature `n_threads` is forced to 1
+  (`Rav1dContextTaskType::Single`), so rav1d never spawns. With it (the
+  `threads`/`simd-threads` builds) `n_threads` is honoured: `rav1d_open`
+  hands each worker body to the spawner `src/threads.rs` registers, and the
+  thread runs in a Worker (`pkg/thread-worker.js`) on the shared memory.
+  `max_frame_delay` is left to rav1d's default (ceil(√n) frame threads) when
+  threads > 1, else 1. See docs/performance.md for the numbers and the
+  Chromium nested-Worker constraint.
+- A reset (`decoder.rs::reset_state`) is rav1d's `flush()` — the instance and
+  its threads survive a seek. `flush()` drops the wrapper's pending input
+  since `6f780a0`.
 - Film grain synthesis is on by default (rav1d applies it, like libdav1d);
   `Config::apply_grain` turns it off.
 

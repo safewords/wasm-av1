@@ -118,6 +118,84 @@ fn every_fixture_matches_ffmpeg() {
 }
 
 #[test]
+fn worker_threads_decode_the_same_pictures() {
+    // rav1d's frame + tile threading (what the wasm `threads` build runs as
+    // Web Workers) must be bit-exact with the single-threaded decode, and
+    // the end-of-stream drain must deliver the frames still in flight.
+    for fx in fixtures() {
+        let data = fs::read(&fx.ivf).unwrap();
+        for threads in [2, 4] {
+            let (frames, stats) = decode_all(
+                data.clone(),
+                Config {
+                    threads,
+                    ..Config::default()
+                },
+            );
+            assert_eq!(
+                frames.len() as u64,
+                fx.frames,
+                "{}: frame count with {threads} threads",
+                fx.name
+            );
+            assert_eq!(stats.decode_errors, 0, "{}: errors", fx.name);
+            for (i, f) in frames.iter().enumerate() {
+                assert_eq!(
+                    f.pts,
+                    Some(i as i64),
+                    "{}: order with {threads} threads",
+                    fx.name
+                );
+            }
+            assert_eq!(
+                md5_of(&frames),
+                fx.md5,
+                "{}: MD5 with {threads} threads",
+                fx.name
+            );
+        }
+    }
+}
+
+#[test]
+fn flush_at_any_point_leaves_a_working_decoder() {
+    // A reset now keeps the rav1d instance (its worker threads on wasm) and
+    // relies on rav1d's flush dropping *everything*, including a temporal
+    // unit it had only half consumed (a TU with a hidden frame + a shown
+    // one hands the second half back as "pending"). Flush after every
+    // possible run() count and decode the whole clip again each time.
+    let fx = &fixtures()[0];
+    let data = fs::read(&fx.ivf).unwrap();
+    for threads in [1, 2] {
+        let mut dec = Decoder::new(Config {
+            threads,
+            max_buffered: 3,
+            ..Config::default()
+        })
+        .unwrap();
+        dec.set_source_ivf(data.clone()).unwrap();
+        for k in 1..40 {
+            for _ in 0..k {
+                let _ = dec.run();
+                dec.next_frame();
+            }
+            dec.flush().unwrap();
+            assert_eq!(dec.frames_buffered(), 0);
+        }
+        // Rewound by flush: the whole clip again, still exact.
+        let mut frames = Vec::new();
+        while !dec.finished() {
+            dec.run().unwrap();
+            while let Some(f) = dec.next_frame() {
+                frames.push(f.clone());
+            }
+        }
+        assert_eq!(frames.len() as u64, fx.frames, "{threads} threads");
+        assert_eq!(md5_of(&frames), fx.md5, "{threads} threads");
+    }
+}
+
+#[test]
 fn film_grain_is_applied_by_default_and_can_be_disabled() {
     let fx = fixtures()
         .into_iter()

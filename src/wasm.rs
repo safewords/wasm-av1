@@ -28,6 +28,14 @@ pub fn simd_enabled() -> bool {
     convert::simd_enabled()
 }
 
+/// True when this .wasm was built with atomics + shared memory and can run
+/// rav1d's worker threads as Web Workers (`threads` > 1 in the constructor).
+/// Needs a cross-origin-isolated page and the decoder in a Worker.
+#[wasm_bindgen(js_name = "threadsSupported")]
+pub fn threads_supported() -> bool {
+    crate::THREADS_SUPPORTED
+}
+
 /// Crate version.
 #[wasm_bindgen]
 pub fn version() -> String {
@@ -91,23 +99,33 @@ fn js_err(e: impl std::fmt::Display) -> JsError {
 impl Av1Decoder {
     /// `maxBuffered` frames kept ahead (default 10, upstream's
     /// `NUM_FRAMES_BUFFERED`); `applyGrain` toggles film-grain synthesis
-    /// (default true).
+    /// (default true); `threads` rav1d worker threads (default 1; more only
+    /// on a build where `threadsSupported()` is true, else forced to 1 — see
+    /// `threads()` for what was applied).
     #[wasm_bindgen(constructor)]
     pub fn new(
         max_buffered: Option<u32>,
         apply_grain: Option<bool>,
+        threads: Option<u32>,
     ) -> Result<Av1Decoder, JsError> {
         let config = Config {
             max_buffered: max_buffered
                 .map(|n| n.max(1) as usize)
                 .unwrap_or(Config::default().max_buffered),
             apply_grain: apply_grain.unwrap_or(true),
-            threads: 1,
+            threads: threads.unwrap_or(1).max(1),
         };
         Ok(Av1Decoder {
             inner: Decoder::new(config).map_err(js_err)?,
             rgba: Vec::new(),
         })
+    }
+
+    /// Worker threads this decoder runs with (1 unless the build supports
+    /// threads and more were asked for).
+    #[wasm_bindgen]
+    pub fn threads(&self) -> u32 {
+        crate::decoder::effective_threads(self.inner.config())
     }
 
     // ---- input -----------------------------------------------------------

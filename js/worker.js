@@ -8,7 +8,14 @@
 // transferred), which is what an ImageBitmap path would cost anyway.
 //
 // Messages in:  init | ivf | container | source | initSegment | segment | push | eos | flush | ack | close
-// Messages out: ready | info | frame | finished | error
+// Messages out: ready | info | frame | finished | error | spawnThread
+//
+// `init.threads` > 1 asks for a threads runtime (loader.js picks one when the
+// page is cross-origin isolated) and that many rav1d worker threads; `ready`
+// reports how many there are. Each thread is a Worker the *page* creates:
+// this Worker sends `spawnThread` up (WorkerDecoder answers) because it is
+// about to block waiting for those threads, and a Worker created from a
+// blocked Worker never starts in Chromium (see loader.js).
 //
 // Use `WorkerDecoder` in worker-client.js rather than talking to this directly.
 
@@ -72,11 +79,12 @@ self.onmessage = async (ev) => {
   try {
     switch (m.type) {
       case 'init': {
-        rt = await loadWasmAv1({ variant: m.variant ?? 'auto', baseUrl: m.baseUrl });
+        const threads = Math.max(1, m.threads ?? 1);
+        rt = await loadWasmAv1({ variant: m.variant ?? 'auto', baseUrl: m.baseUrl, threads: threads > 1 });
         output = m.output ?? 'planes';
         prefetch = m.prefetch ?? 6;
-        dec = new Decoder(rt, { maxBuffered: m.maxBuffered ?? 10, applyGrain: m.applyGrain ?? true });
-        post({ type: 'ready', variant: rt.variant, simd: rt.simd, version: rt.version });
+        dec = new Decoder(rt, { maxBuffered: m.maxBuffered ?? 10, applyGrain: m.applyGrain ?? true, threads });
+        post({ type: 'ready', variant: rt.variant, simd: rt.simd, threads: dec.threads, version: rt.version });
         break;
       }
       case 'ivf':

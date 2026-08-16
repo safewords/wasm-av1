@@ -1,10 +1,13 @@
 {
-  "version": "0.1.3",
-  "rav1d": "55c4d094e6018d2253997228337b26e8cf354f0c",
+  "version": "0.2.0",
+  "rav1d": "6f780a0d9b5b6fcdf8f97e681535056b26aff352",
   "profile": "release",
   "features": "default",
+  "threadWorker": "thread-worker.js",
   "variants": {
-    "baseline": { "wasm": "baseline/wasm_av1_bg.wasm", "js": "baseline/wasm_av1.js", "bytes": 1695614 },
-    "simd":     { "wasm": "simd/wasm_av1_bg.wasm",     "js": "simd/wasm_av1.js",     "bytes": 1792150 }
+    "baseline": { "wasm": "baseline/wasm_av1_bg.wasm", "js": "baseline/wasm_av1.js", "bytes": 1697116 },
+    "simd": { "wasm": "simd/wasm_av1_bg.wasm", "js": "simd/wasm_av1.js", "bytes": 1793726 },
+    "threads": { "wasm": "threads/wasm_av1_bg.wasm", "js": "threads/wasm_av1.js", "bytes": 1726717 },
+    "simd-threads": { "wasm": "simd-threads/wasm_av1_bg.wasm", "js": "simd-threads/wasm_av1.js", "bytes": 1823585 }
   }
 }

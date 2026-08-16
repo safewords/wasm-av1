@@ -7,6 +7,7 @@
 // no dependency.
 
 let simdCache;
+let threadsCache;
 
 /** True if this engine can instantiate wasm that uses SIMD128. */
 export function detectSimd() {
@@ -52,9 +53,47 @@ export function detectBaseline() {
   }
 }
 
-/** Which variant `loadWasmAv1({ variant: 'auto' })` would choose, or null if none can run. */
-export function chooseVariant() {
-  if (detectSimd()) return 'simd';
-  if (detectBaseline()) return 'baseline';
+/**
+ * True if the `threads` builds can run here: the engine validates shared
+ * memory + atomics, `SharedArrayBuffer` exists (in browsers that means the
+ * page is cross-origin isolated — COOP + COEP headers), and Workers exist to
+ * be the threads. Says nothing about whether threads would *help*.
+ */
+export function detectThreads() {
+  if (threadsCache === undefined) {
+    try {
+      threadsCache =
+        typeof SharedArrayBuffer === 'function'
+        && (typeof crossOriginIsolated === 'undefined' || crossOriginIsolated)
+        && typeof Worker === 'function'
+        // (module (memory 1 1 shared) (func (drop (i32.atomic.load (i32.const 0)))))
+        && WebAssembly.validate(
+          new Uint8Array([
+            0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 5, 4, 1, 3, 1, 1, 10, 11, 1, 9, 0, 65, 0, 254, 16,
+            2, 0, 26, 11,
+          ]),
+        );
+    } catch {
+      threadsCache = false;
+    }
+  }
+  return threadsCache;
+}
+
+/**
+ * Which variant `loadWasmAv1({ variant: 'auto' })` would choose, or null if
+ * none can run. `threads: true` prefers a threads build when the engine (and
+ * the page's isolation) allow it — that is what `loadWasmAv1({ threads })`
+ * asks with; a caller that only wants a *decoder* on the main thread must not
+ * (rav1d blocks its calling thread with more than one thread, which browsers
+ * forbid on the main thread).
+ */
+export function chooseVariant({ threads = false } = {}) {
+  const t = threads && detectThreads();
+  if (detectSimd()) return t ? 'simd-threads' : 'simd';
+  if (detectBaseline()) return t ? 'threads' : 'baseline';
   return null;
 }
+
+/** All variant names, most capable first. */
+export const VARIANTS = Object.freeze(['simd-threads', 'threads', 'simd', 'baseline']);

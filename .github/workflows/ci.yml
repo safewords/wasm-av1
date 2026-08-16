@@ -1,5 +1,7 @@
-# Prove the decoder: native tests against the ffmpeg reference MD5s, then the
-# two wasm variants driven from Node, then the wasm build artefacts.
+# Prove the decoder: native tests against the ffmpeg reference MD5s (single-
+# and multi-threaded), then the wasm variants driven from Node, then the wasm
+# build artefacts. The threads variants rebuild std with atomics, hence the
+# rust-src component (rust-toolchain.toml lists it too).
 #
 # Public repository, so GitHub's hosted runners. The wasm-bindgen CLI is
 # pinned to the crate version in Cargo.lock; binaryen comes from GitHub
@@ -31,7 +33,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
-          components: rustfmt, clippy
+          components: rustfmt, clippy, rust-src
           targets: wasm32-unknown-unknown
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: cargo fmt --all --check
@@ -42,13 +44,14 @@ jobs:
         run: cargo test --release --no-default-features --features bitdepth_8,bitdepth_16
 
   wasm:
-    name: build both variants, test them in Node
+    name: build the variants, test them in Node
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
+          components: rust-src
           targets: wasm32-unknown-unknown
       - uses: mozilla-actions/sccache-action@v0.0.9
       # The tests are written and verified against Node 22.
@@ -71,7 +74,7 @@ jobs:
         run: |
           cargo test --release --target wasm32-unknown-unknown --test wasm_convert
           RUSTFLAGS="-C target-feature=+simd128" cargo test --release --target wasm32-unknown-unknown --test wasm_convert --target-dir target/wasm-test-simd
-      - name: build baseline + simd
+      - name: build baseline, simd, threads, simd-threads
         run: bash scripts/build.sh
       # Informational: a Windows-built pkg/ and this Linux build differ in the
       # source paths rustc embeds in panic strings, so this cannot be a hard
@@ -82,7 +85,7 @@ jobs:
       - name: node tests against the built wasm
         run: node --test test/decode.test.mjs
       - name: sizes
-        run: cat pkg/manifest.json && gzip -9 -c pkg/baseline/wasm_av1_bg.wasm | wc -c && gzip -9 -c pkg/simd/wasm_av1_bg.wasm | wc -c
+        run: cat pkg/manifest.json && for v in baseline simd threads simd-threads; do echo "$v gzip: $(gzip -9 -c pkg/$v/wasm_av1_bg.wasm | wc -c)"; done
       - uses: actions/upload-artifact@v4
         with:
           name: pkg

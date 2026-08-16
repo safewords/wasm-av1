@@ -187,12 +187,15 @@ export class Av1Decoder {
     /**
      * `maxBuffered` frames kept ahead (default 10, upstream's
      * `NUM_FRAMES_BUFFERED`); `applyGrain` toggles film-grain synthesis
-     * (default true).
+     * (default true); `threads` rav1d worker threads (default 1; more only
+     * on a build where `threadsSupported()` is true, else forced to 1 — see
+     * `threads()` for what was applied).
      * @param {number | null} [max_buffered]
      * @param {boolean | null} [apply_grain]
+     * @param {number | null} [threads]
      */
-    constructor(max_buffered, apply_grain) {
-        const ret = wasm.av1decoder_new(isLikeNone(max_buffered) ? Number.MAX_SAFE_INTEGER : (max_buffered) >>> 0, isLikeNone(apply_grain) ? 0xFFFFFF : apply_grain ? 1 : 0);
+    constructor(max_buffered, apply_grain, threads) {
+        const ret = wasm.av1decoder_new(isLikeNone(max_buffered) ? Number.MAX_SAFE_INTEGER : (max_buffered) >>> 0, isLikeNone(apply_grain) ? 0xFFFFFF : apply_grain ? 1 : 0, isLikeNone(threads) ? Number.MAX_SAFE_INTEGER : (threads) >>> 0);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -374,6 +377,15 @@ export class Av1Decoder {
         return DecoderStats.__wrap(ret);
     }
     /**
+     * Worker threads this decoder runs with (1 unless the build supports
+     * threads and more were asked for).
+     * @returns {number}
+     */
+    threads() {
+        const ret = wasm.av1decoder_threads(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * @returns {number}
      */
     timeBaseDen() {
@@ -503,6 +515,17 @@ export function containerSupport() {
  */
 export function simdEnabled() {
     const ret = wasm.simdEnabled();
+    return ret !== 0;
+}
+
+/**
+ * True when this .wasm was built with atomics + shared memory and can run
+ * rav1d's worker threads as Web Workers (`threads` > 1 in the constructor).
+ * Needs a cross-origin-isolated page and the decoder in a Worker.
+ * @returns {boolean}
+ */
+export function threadsSupported() {
+    const ret = wasm.threadsSupported();
     return ret !== 0;
 }
 

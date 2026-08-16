@@ -129,11 +129,24 @@ fn flush_drops_a_container_source() {
 
 #[test]
 fn cmaf_segments_pushed_one_by_one_decode_continuously() {
+    cmaf_segments_decode_continuously(1);
+}
+
+#[test]
+fn cmaf_segments_decode_continuously_with_worker_threads() {
+    // The production path (segment-fed, frames popped as they come) with
+    // rav1d's frame threading: frames cross the segment boundary in order,
+    // and the last ones in flight come out on end_of_stream.
+    cmaf_segments_decode_continuously(4);
+}
+
+fn cmaf_segments_decode_continuously(threads: u32) {
     // testdata/cmaf: init.mp4 + seg0.m4s + seg1.m4s (1 s each) of the same
     // stream as the 320x180 fixture, cut the way HLS serves CMAF.
     let (want_md5, want_frames) = reference_md5();
     let mut dec = Decoder::new(Config {
         max_buffered: 4,
+        threads,
         ..Config::default()
     })
     .unwrap();

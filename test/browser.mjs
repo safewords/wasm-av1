@@ -1,7 +1,11 @@
-// Drive the demo page in headless Chromium and Firefox with Playwright:
+// Drive the demo page in headless Chromium, Firefox and WebKit with Playwright:
 // every (variant × renderer × worker) combination must play a fixture to
 // the end, show every frame (or drop a bounded few), and match the decoded
 // MD5 the native tests hold the wasm to. Screenshots go to test/out/.
+//
+// The server sends COOP/COEP so the page is cross-origin isolated and the
+// threads variants can run (SharedArrayBuffer); the thread combos assert
+// that rav1d really ran with N worker threads (`stats.threads`).
 //
 // Not part of `npm test` (needs a Playwright install). Run with:
 //   PLAYWRIGHT_DIR=/path/to/node_modules/playwright node test/browser.mjs
@@ -19,7 +23,7 @@ const pwDir = process.env.PLAYWRIGHT_DIR
   ?? [join(root, 'node_modules', 'playwright'), join(root, '..', '..', 'lewd', 'lewd-frontend', 'node_modules', 'playwright')]
     .find((p) => { try { statSync(p); return true; } catch { return false; } })
   ?? 'playwright';
-const { chromium, firefox } = await import(pathToFileURL(join(pwDir, 'index.mjs')).href);
+const { chromium, firefox, webkit } = await import(pathToFileURL(join(pwDir, 'index.mjs')).href);
 
 // --- static server (same as scripts/serve.mjs, in-process) ------------------
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.ivf': 'application/octet-stream', '.json': 'application/json' };
@@ -27,7 +31,11 @@ const server = createServer((req, res) => {
   let file = normalize(join(root, decodeURIComponent(new URL(req.url, 'http://x').pathname)));
   try {
     if (statSync(file).isDirectory()) file = join(file, 'index.html');
-    res.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Content-Length': statSync(file).size });
+    res.writeHead(200, {
+      'Content-Type': types[extname(file)] || 'application/octet-stream', 'Content-Length': statSync(file).size,
+      // Cross-origin isolation: what a page needs for SharedArrayBuffer, i.e. the threads builds.
+      'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp',
+    });
     createReadStream(file).pipe(res);
   } catch { res.writeHead(404); res.end(); }
 });
@@ -94,10 +102,18 @@ combos.push({ variant: 'simd', renderer: 'webgl', worker: true, file: 'testsrc-3
 combos.push({ variant: 'baseline', renderer: '2d', worker: true, file: 'testsrc-320x180-8bit.webm' });
 combos.push({ variant: 'simd', renderer: 'webgl', worker: false, hls: true });
 combos.push({ variant: 'simd', renderer: 'webgl', worker: true, hls: true });
+// Threads: rav1d's worker threads as Web Workers on shared memory. Only in a
+// Worker (rav1d blocks its caller), on the isolated page the server makes.
+combos.push({ variant: 'simd-threads', renderer: 'webgl', worker: true, threads: 4 });
+combos.push({ variant: 'threads', renderer: '2d', worker: true, threads: 2 });
+combos.push({ variant: 'simd-threads', renderer: 'webgl', worker: true, threads: 4, file: 'testsrc-320x180-8bit.mp4' });
+combos.push({ variant: 'simd-threads', renderer: 'webgl', worker: true, threads: 4, hls: true });
+// 'auto' with threads on an isolated page picks a threads variant.
+combos.push({ variant: 'auto', expectVariant: 'simd-threads', renderer: 'webgl', worker: true, threads: 'auto' });
 
 mkdirSync(join(root, 'test', 'out'), { recursive: true });
 let failures = 0;
-for (const [name, launcher] of [['chromium', chromium], ['firefox', firefox]]) {
+for (const [name, launcher] of [['chromium', chromium], ['firefox', firefox], ['webkit', webkit]]) {
   let browser;
   try {
     browser = await launcher.launch({ args: name === 'chromium' ? ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] : [] });
@@ -111,7 +127,8 @@ for (const [name, launcher] of [['chromium', chromium], ['firefox', firefox]]) {
     page.on('pageerror', (e) => consoleErrors.push(String(e)));
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     await page.goto(`${base}/demo/`);
-    const label = `${name} ${combo.variant} ${combo.renderer} ${combo.worker ? 'worker' : 'main'}${combo.file ? ' ' + combo.file.split('.').pop() : ''}${combo.hls ? ' hls-cmaf' : ''}`;
+    const label = `${name} ${combo.variant} ${combo.renderer} ${combo.worker ? 'worker' : 'main'}${combo.threads ? ' t' + combo.threads : ''}${combo.file ? ' ' + combo.file.split('.').pop() : ''}${combo.hls ? ' hls-cmaf' : ''}`;
+    const playerOpts = { variant: combo.variant, renderer: combo.renderer, worker: combo.worker, ...(combo.threads ? { threads: combo.threads } : {}) };
     try {
       await page.evaluate((src) => new Promise((res, rej) => {
         const s = document.createElement('script'); s.type = 'module';
@@ -124,15 +141,17 @@ try { ${src}; window.__done = true; } catch (e) { window.__err = String(e && e.s
           else if (window.__err) { clearInterval(t); rej(new Error(window.__err)); }
           else if (Date.now() > deadline) { clearInterval(t); rej(new Error('harness timeout')); }
         }, 20);
-      }), combo.hls ? hlsHarness({ variant: combo.variant, renderer: combo.renderer, worker: combo.worker }) : harness(combo));
+      }), combo.hls ? hlsHarness(playerOpts) : harness({ ...playerOpts, ...(combo.file ? { file: combo.file } : {}) }));
       const r = await page.evaluate(() => window.__result);
       const st = r.stats;
       const okFrames = st.framesShown + st.framesDropped === 48;
       const okDraw = r.nonBlackFraction > 0.5;
       const okInfo = combo.hls || combo.file?.endsWith('webm') ? true : (r.info.frameCount === 48 || r.info.frameCount === null);
-      const ok = okFrames && okDraw && okInfo && r.errors.length === 0 && consoleErrors.length === 0 && st.variant === combo.variant && r.rendererKind === combo.renderer;
+      const wantThreads = combo.threads === 'auto' ? 2 : (combo.threads ?? 1);
+      const okThreads = combo.threads ? st.threads >= wantThreads : st.threads === 1;
+      const ok = okFrames && okDraw && okInfo && okThreads && r.errors.length === 0 && consoleErrors.length === 0 && st.variant === (combo.expectVariant ?? combo.variant) && r.rendererKind === combo.renderer;
       if (!ok) failures++;
-      console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(39)} shown ${st.framesShown} dropped ${st.framesDropped} draw ${(st.drawMs / Math.max(1, st.framesShown)).toFixed(2)}ms ${st.worker ? '' : `decode ${(st.decodeMs / 48).toFixed(2)}ms`} path ${st.drawPath} wall ${r.wall.toFixed(0)}ms nonblack ${(r.nonBlackFraction * 100).toFixed(0)}%${r.errors.length ? ' errors: ' + r.errors.join('; ') : ''}${consoleErrors.length ? ' console: ' + consoleErrors.join('; ') : ''}`);
+      console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(42)} threads ${st.threads} shown ${st.framesShown} dropped ${st.framesDropped} draw ${(st.drawMs / Math.max(1, st.framesShown)).toFixed(2)}ms ${st.worker ? '' : `decode ${(st.decodeMs / 48).toFixed(2)}ms`} path ${st.drawPath} wall ${r.wall.toFixed(0)}ms nonblack ${(r.nonBlackFraction * 100).toFixed(0)}%${r.errors.length ? ' errors: ' + r.errors.join('; ') : ''}${consoleErrors.length ? ' console: ' + consoleErrors.join('; ') : ''}`);
       writeFileSync(join(root, 'test', 'out', `${label.replace(/ /g, '-')}.png`), Buffer.from(r.png.split(',')[1], 'base64'));
     } catch (e) {
       failures++;

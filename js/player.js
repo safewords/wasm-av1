@@ -10,7 +10,7 @@
 
 import { Decoder, Run } from './decoder.js';
 import { loadWasmAv1 } from './loader.js';
-import { createRenderer } from './render.js';
+import { createRenderer, WebGLRenderer } from './render.js';
 import { WorkerDecoder } from './worker-client.js';
 
 export class Av1Player {
@@ -34,7 +34,9 @@ export class Av1Player {
     this.canvas = canvas;
     this.opts = { renderer: 'auto', worker: false, variant: 'auto', maxBuffered: 10, applyGrain: true, decodeBudgetMs: 8, fallbackFps: 24, ...opts };
     this.renderer = createRenderer(canvas, this.opts.renderer);
-    this.rendererKind = this.renderer.constructor.name === 'WebGLRenderer' ? 'webgl' : '2d';
+    // instanceof, not constructor.name: minifiers rename classes, and a wrong
+    // answer here also makes the Worker convert RGBA the WebGL path never uses.
+    this.rendererKind = this.renderer instanceof WebGLRenderer ? 'webgl' : '2d';
     this.state = 'idle'; // idle | loading | ready | playing | paused | ended
     this.onstate = null;
     this.onstats = null;

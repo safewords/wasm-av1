@@ -63,8 +63,11 @@ export class WebGLRenderer {
   /** @param {HTMLCanvasElement|OffscreenCanvas} canvas */
   constructor(canvas) {
     this.canvas = canvas;
-    const gl = canvas.getContext('webgl', { preserveDrawingBuffer: false, antialias: false, alpha: false, premultipliedAlpha: false })
-      || canvas.getContext('experimental-webgl');
+    // preserveDrawingBuffer: the picture stays readable between frames
+    // (drawImage/toDataURL for thumbnails, tests, screenshots) at the cost of
+    // a copy instead of a swap per composite — negligible next to a decode.
+    const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true, antialias: false, alpha: false, premultipliedAlpha: false })
+      || canvas.getContext('experimental-webgl', { preserveDrawingBuffer: true });
     if (!gl) throw new Error('wasm-av1: WebGL not available');
     this.gl = gl;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);

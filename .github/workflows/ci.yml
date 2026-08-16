@@ -67,6 +67,10 @@ jobs:
           curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz" | tar -xz --strip-components=1 -C "$HOME/binaryen"
           echo "$HOME/binaryen/bin" >> "$GITHUB_PATH"
           "$HOME/binaryen/bin/wasm-opt" --version
+      - name: in-wasm tests (wasm-bindgen-test in Node), baseline and simd
+        run: |
+          cargo test --release --target wasm32-unknown-unknown --test wasm_convert
+          RUSTFLAGS="-C target-feature=+simd128" cargo test --release --target wasm32-unknown-unknown --test wasm_convert --target-dir target/wasm-test-simd
       - name: build baseline + simd
         run: bash scripts/build.sh
       - name: node tests against the built wasm

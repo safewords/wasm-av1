@@ -12,7 +12,6 @@ name: wasm-av1
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 env:

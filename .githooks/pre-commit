@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Pre-commit gate. Same two commands as the GitHub Actions check that blocks
+# a deploy, and the same step / ok output as scripts/identity-ci-push.sh:
+# check, and refuse the commit. This file does not rewrite the tree.
+#
+# Git runs it only when core.hooksPath is .githooks. In the devenv checkout,
+# `make rust-hooks` (also run by `make clone` and `make init`) sets that.
+# A standalone clone: `git config core.hooksPath .githooks`.
+# `git commit --no-verify` is the one bypass.
+#
+# Docs-only commits skip the compile. The gate runs when a staged file can
+# change what rustfmt or clippy would say.
+set -euo pipefail
+
+if [[ -t 1 ]]; then
+	BOLD=$'\e[1m'; RED=$'\e[31m'; GREEN=$'\e[32m'; BLUE=$'\e[34m'; RESET=$'\e[0m'
+else
+	BOLD=""; RED=""; GREEN=""; BLUE=""; RESET=""
+fi
+
+step() { echo; echo "${BOLD}${BLUE}==> $*${RESET}"; }
+ok()   { echo "${GREEN}✓${RESET} $*"; }
+die()  { echo "${RED}✗${RESET} $*" >&2; exit 1; }
+
+files=()
+diff_out="$(git diff --cached --name-only --diff-filter=ACM -- '*.rs' 'Cargo.toml' 'Cargo.lock' 'rustfmt.toml')"
+while IFS= read -r line; do
+	[[ -n "$line" ]] && files+=("$line")
+done <<< "$diff_out"
+
+if [[ ${#files[@]} -eq 0 ]]; then
+	exit 0
+fi
+
+command -v cargo >/dev/null 2>&1 || die "missing required command: cargo"
+
+step "cargo fmt --all --check"
+cargo fmt --all --check
+ok "fmt clean"
+
+step "cargo clippy --all-targets -- -D warnings"
+cargo clippy --all-targets -- -D warnings
+ok "clippy clean"

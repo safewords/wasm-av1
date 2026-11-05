@@ -16,6 +16,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Link with mold, as the org's other Rust builds do. Since Rust 1.90
+  # linux-gnu links with the bundled rust-lld; `linker-features=-lld` turns
+  # that off and `-fuse-ld=mold` has cc hand the link to mold.
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C linker-features=-lld -C link-arg=-fuse-ld=mold"
   RUST_BACKTRACE: 1
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: sccache
@@ -30,10 +34,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt, clippy, rust-src
           targets: wasm32-unknown-unknown
+      # mold for the native links (tests, build scripts, wasm-bindgen's
+      # runner); the wasm32 target keeps its own linker.
+      - uses: rui314/setup-mold@v1
+        with:
+          mold-version: 3.0.0
+          make-default: false
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
@@ -48,10 +58,16 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rust-src
           targets: wasm32-unknown-unknown
+      # mold for the native links (tests, build scripts, wasm-bindgen's
+      # runner); the wasm32 target keeps its own linker.
+      - uses: rui314/setup-mold@v1
+        with:
+          mold-version: 3.0.0
+          make-default: false
       - uses: mozilla-actions/sccache-action@v0.0.9
       # The tests are written and verified against Node 22.
       - uses: actions/setup-node@v4

@@ -41,7 +41,7 @@ env:
   # linux-gnu links with the bundled rust-lld; `linker-features=-lld` turns
   # that off and `-fuse-ld=mold` has cc hand the link to mold.
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C linker-features=-lld -C link-arg=-fuse-ld=mold"
-  WASM_BINDGEN_VERSION: 0.2.127
+  WASM_BINDGEN_VERSION: 0.2.130
   BINARYEN_VERSION: version_123
 
 jobs:

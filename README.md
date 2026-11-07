@@ -24,6 +24,10 @@ threads on wasm through an embedder spawner — see
 committed so a git dependency (`github:safewords/wasm-av1#sha`) carries it;
 `scripts/build.sh` regenerates it.
 
+**Feature docs:** [`docs/features/README.md`](docs/features/README.md) — each
+component as the code has it, with `path:line` references, and the known
+defects.
+
 ## What you get
 
 ```
@@ -99,8 +103,8 @@ is committed).
 ## Building
 
 ```bash
-rustup target add wasm32-unknown-unknown            # rust-toolchain.toml pins 1.96
-cargo install wasm-bindgen-cli --version 0.2.127 --locked   # must match Cargo.lock
+rustup target add wasm32-unknown-unknown            # rust-toolchain.toml pins 1.99.1
+cargo install wasm-bindgen-cli --version 0.2.130 --locked   # must match Cargo.lock
 scoop install binaryen   # or apt/brew — wasm-opt, optional (~15% smaller)
 scripts/build.sh                                    # → pkg/{baseline,simd,threads,simd-threads}, pkg/thread-worker.js, pkg/manifest.json
 ```

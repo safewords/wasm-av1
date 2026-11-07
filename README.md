@@ -28,6 +28,8 @@ committed so a git dependency (`github:safewords/wasm-av1#sha`) carries it;
 component as the code has it, with `path:line` references, and the known
 defects.
 
+**Changelog:** [`CHANGELOG.md`](CHANGELOG.md) — every release, newest first.
+
 ## What you get
 
 ```

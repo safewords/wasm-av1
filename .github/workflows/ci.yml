@@ -11,6 +11,10 @@ name: wasm-av1
 
 on:
   push:
+    # A change that is only documentation runs no pipeline (2026-11-06).
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
     branches: [main]
   workflow_dispatch:
 

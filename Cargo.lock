@@ -498,13 +498,15 @@ dependencies = [
 [[package]]
 name = "rivet-container"
 version = "0.2.0"
-source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#89be43124e99a2e6562e92d3e78eb24281ad7e9a"
+source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#2100c310a109bf7185768cd56f7397f4ebb8bb33"
 dependencies = [
  "anyhow",
  "bytes",
  "matroska-demuxer",
  "mp4",
  "rivet-frame",
+ "rivet-h26x",
+ "rivet-vorbis",
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
@@ -513,9 +515,25 @@ dependencies = [
 [[package]]
 name = "rivet-frame"
 version = "0.2.0"
-source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#89be43124e99a2e6562e92d3e78eb24281ad7e9a"
+source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#2100c310a109bf7185768cd56f7397f4ebb8bb33"
 dependencies = [
  "bytes",
+]
+
+[[package]]
+name = "rivet-h26x"
+version = "0.2.0"
+source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#2100c310a109bf7185768cd56f7397f4ebb8bb33"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rivet-vorbis"
+version = "0.1.0"
+source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#2100c310a109bf7185768cd56f7397f4ebb8bb33"
+dependencies = [
+ "thiserror 2.0.21",
 ]
 
 [[package]]

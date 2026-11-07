@@ -97,19 +97,20 @@ fn container_info_matches_ffprobe_shape() {
 }
 
 #[test]
-fn non_av1_or_garbage_containers_are_rejected_cleanly() {
+fn garbage_is_rejected_cleanly_and_ivf_is_a_container_too() {
     let mut dec = Decoder::new(Config::default()).unwrap();
     assert!(matches!(
         dec.set_source_container(vec![0u8; 64]),
         Err(Error::Container(_))
     ));
-    // An IVF is not a container rivet knows.
+    // rivet reads IVF itself since its 2100c31 (develop), so an IVF handed to
+    // the container path decodes rather than being refused…
     let ivf = testdata("testsrc-320x180-8bit.ivf");
-    assert!(matches!(
-        dec.set_source_container(ivf.clone()),
-        Err(Error::Container(_))
-    ));
-    // …but the decoder is still fine.
+    dec.set_source_container(ivf.clone()).unwrap();
+    assert!(matches!(dec.run_until_full(), Ok(RunOutcome::Full)));
+    // …and the direct IVF path still works after a rejected source.
+    let mut dec = Decoder::new(Config::default()).unwrap();
+    assert!(dec.set_source_container(vec![0u8; 64]).is_err());
     dec.set_source_ivf(ivf).unwrap();
     assert!(matches!(dec.run_until_full(), Ok(RunOutcome::Full)));
 }

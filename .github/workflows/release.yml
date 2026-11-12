@@ -61,7 +61,7 @@ jobs:
           CRATE=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           [ "$VER" = "$PKG" ] && [ "$VER" = "$CRATE" ] || { echo "::error::tag $TAG but package.json=$PKG Cargo.toml=$CRATE"; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"; echo "ver=$VER" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rust-src
           targets: wasm32-unknown-unknown

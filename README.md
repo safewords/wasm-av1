@@ -105,7 +105,7 @@ is committed).
 ## Building
 
 ```bash
-rustup target add wasm32-unknown-unknown            # rust-toolchain.toml pins 1.99.1
+rustup target add wasm32-unknown-unknown            # rust-toolchain.toml pins 1.100.0
 cargo install wasm-bindgen-cli --version 0.2.130 --locked   # must match Cargo.lock
 scoop install binaryen   # or apt/brew — wasm-opt, optional (~15% smaller)
 scripts/build.sh                                    # → pkg/{baseline,simd,threads,simd-threads}, pkg/thread-worker.js, pkg/manifest.json

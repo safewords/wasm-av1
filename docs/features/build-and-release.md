@@ -34,7 +34,7 @@ flowchart LR
 | Workflow | `release.yml` | `push` of `v*` tags, or `workflow_dispatch` with a tag (`.github/workflows/release.yml:25-32`) |
 | Secret | `NPM_TOKEN` (repository secret, optional) | Otherwise npm trusted publishing (OIDC); with neither the npm step warns and the release still succeeds (`release.yml:126-150`) |
 
-Toolchain: Rust `1.99.1` with `rust-src` (`rust-toolchain.toml`),
+Toolchain: Rust `1.100.0` with `rust-src` (`rust-toolchain.toml`),
 wasm-bindgen-cli `0.2.130`, binaryen `version_123`, Node 22, mold for native
 links (`ci.yml:21-33`). The threads variants rebuild std with
 `-Zbuild-std` under `RUSTC_BOOTSTRAP=1` (`scripts/build.sh:60-67`).
@@ -70,14 +70,32 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
 - CI's "does the committed `pkg/` match" step is a warning only: a Windows
   build and a Linux build differ in the paths embedded in panic strings
   (`ci.yml:98-104`).
-- `scripts/build.sh:120` (and `release.yml:112`) use GNU `stat -c %s`; on
-  macOS the script writes a manifest with empty `bytes`.
+- `scripts/build.sh` does not run on a stock macOS (run 2026-11-12): BSD sed
+  rejects the `{n;s/…/p}` expressions (`scripts/build.sh:42`, `:112`) and the
+  script exits there; `/bin/bash` 3.2 then refuses the empty arrays under
+  `set -u` (`:67`); and `:120` (with `release.yml:112`) uses GNU
+  `stat -c %s`. CI runs it on Linux, where all three are fine.
+- The threads variants pass `-C target-feature=+atomics`, which is not a
+  stable target feature. rustc has always warned; from 1.100.0 the warning
+  adds that it "will become a hard error in a future release"
+  (rust-lang/rust#162235). The build still succeeds under
+  `RUSTC_BOOTSTRAP=1`; read that issue before the next toolchain bump.
+- Nothing reaches into Cargo's build directory. `build.sh` reads only the
+  final `target/wasm-<variant>/wasm32-unknown-unknown/<profile>/wasm_av1.wasm`
+  (`scripts/build.sh:68`), which Cargo 1.100's new layout for intermediate
+  artifacts did not move.
+- `.cargo/config.toml` sets a 7-day dependency cooldown
+  (`global-min-publish-age`): `cargo update` and `cargo add` skip crates.io
+  versions younger than that. It does not apply to the two git dependencies
+  or to builds from `Cargo.lock`.
 - The browser matrix needs Playwright (`PLAYWRIGHT_DIR`) and does not run in CI.
 - A new Rust version cold-starts sccache: the first CI build after a bump is
   2-4x slower.
 
 ## History & references
 
+- 2026-11-12: Rust 1.100.0 (toolchain file, both workflows) and the
+  dependency cooldown. No source change was needed.
 - `bb53c54`: Rust 1.99.1 and mold for the native side.
 - `ec0e315`: dependencies within semver, wasm-bindgen 0.2.130.
 - The repository README's "Testing" and "Performance" sections, and
@@ -88,5 +106,5 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
 | Idea | Motivation | Sketch | Status |
 |---|---|---|---|
 | Record rivet in the manifest | Know which demuxer a `pkg/` holds | Add `"rivet-container"` beside `"rav1d"` in `build.sh` | Proposed |
-| Portable `stat` | Builds on macOS | `wc -c < file` | Proposed |
+| Portable `build.sh` | Builds on macOS | `wc -c < file` for `stat`; `p;}` in the sed expressions; `${arr[@]+"${arr[@]}"}` for the empty arrays | Proposed |
 | Rebuild `pkg/` with each dependency bump | `main` consumers get what the source says | CI artifact committed by the release prep, or stop committing `pkg/` | Proposed |

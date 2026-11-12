@@ -14,7 +14,10 @@ A release is a `v*` tag matching the version in `package.json` and
 
 - IVF handed to `setSourceContainer` decodes, now that rivet reads IVF as a
   container; it had been refused.
-- Built with Rust 1.99.1; the native side links with mold.
+- Built with Rust 1.100.0; the native side links with mold.
+- `cargo update` and `cargo add` in this repository ignore crates.io versions
+  published in the last 7 days (`.cargo/config.toml`). Builds from
+  `Cargo.lock` are unaffected.
 - Dependencies updated within their semver ranges, including wasm-bindgen
   0.2.130.
 

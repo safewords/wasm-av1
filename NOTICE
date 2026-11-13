@@ -28,7 +28,8 @@ builds (pkg/, the npm package, the release artefacts):
 
 The Open Encoding Attribution License 1.0 is source-available, not open
 source, and it is not the Apache License this repository's own code is
-under. Its text is LICENSE.md in each of those repositories. In short, and
+under. Its text is LICENSE-OEAL.md here (shipped in the npm package), a
+copy of LICENSE.md in each of those repositories. In short, and
 the licence's numbered terms control: §4 requires anyone who distributes the
 software, in source or built form — a .wasm from this project included — to
 give recipients a copy of that licence and to carry these notices forward;

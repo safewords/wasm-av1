@@ -18,7 +18,8 @@
     "docs",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "LICENSE-OEAL.md"
   ],
   "sideEffects": [
     "./js/worker.js",

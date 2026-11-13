@@ -1,6 +1,6 @@
 # rivet-container: containers demuxed inside the wasm
 
-`rivet` (https://github.com/rivet-transcoder/rivet) is an open-source
+`rivet` (https://github.com/rivet-transcoder/rivet) is a source-available
 transcoding library in Rust. Its `rivet-container` crate demuxes MP4/MOV, fragmented MP4 (moof/trun,
 i.e. CMAF), Matroska/WebM, MPEG-TS and AVI, and hands out video samples as
 codec-native bitstreams — raw OBUs for AV1 — with pts and duration:
@@ -60,27 +60,35 @@ same MD5 as the whole file, pts continuous. `js/hls.js` builds on it.
 
 ## Cost and how to shrink it
 
-The demuxers add ~600 KB uncompressed / ~220 KB gzipped to each variant
-(1.09 → 1.69 MB baseline). `twiggy` attributes ~446 KB to
+Most of every `.wasm` is the demuxers. Measured on 2026-11-12 without
+`wasm-opt`: the baseline variant is 3 026 836 bytes (963 810 gzip) with the
+`container` feature and 681 404 (268 412 gzip) without it. (An earlier
+measurement, of a `wasm-opt` build of 0.x with rav1d, had them add ~600 KB
+uncompressed / ~220 KB gzipped: 1.09 → 1.69 MB baseline.) `twiggy` then
+attributed ~446 KB to
 `setSourceContainer`: three monomorphisations of the `mp4` crate's box readers
 (probe + streaming + legacy paths), Matroska open, and the audio-track and
 subtitle extraction rivet does at construction. It is all reachable through
 `demux_streaming_shared`, so LTO cannot drop it. The trim is rivet-side:
 cargo features on `rivet-container` for per-format demuxers and for audio
 extraction, and constructing the MP4 reader once. Until then, builds that do
-not need containers use `FEATURES=bitdepth_8,bitdepth_16 scripts/build.sh`.
+not need containers use `FEATURES= scripts/build.sh` (`FEATURES` set to
+nothing: no default features).
 
 ## rivet's AV1 decoder
 
 rivet has an AV1 decoder of its own, `rivet-av1` (`crates/av1`, a submodule:
-`safewords/rivet-av1`). wasm-av1 can be built on it instead of rav1d with
-the non-default `rivet-av1` feature — the same git dependency on rivet
-`develop`, a second package of it. It needed changes in rivet-av1 as
-`rivet-container` once needed the one above, and they are not upstream yet:
-[rivet-av1.md](rivet-av1.md).
+`safewords/rivet-av1`). Since 0.3.0 it is this crate's decoder — the same
+git dependency on rivet `develop`, a second package of it, so one revision
+in `Cargo.lock` pins both and `cargo update -p rivet-av1` moves both. It
+needed changes in rivet-av1 as `rivet-container` once needed the one above;
+they are upstream: [rivet-av1.md](rivet-av1.md).
 
 ## Licence note
 
-rivet is under the Open Encoding Attribution License 1.0 (source-available,
-attribution for commercial use). Bundling `rivet-container` into a shipped
-.wasm is distribution under that licence; keep its notice (see NOTICE here).
+rivet is under the Open Encoding Attribution License 1.0: source-available,
+not open source, with a short visible credit required of commercial use
+that reaches third parties. Every `.wasm` built here contains `rivet-av1`,
+and `rivet-container` too with the `container` feature; shipping one is
+distribution under that licence, which asks for a copy of the licence and
+its notices to go with it (see NOTICE here).

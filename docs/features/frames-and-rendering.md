@@ -3,12 +3,12 @@
 > **Status:** STABLE
 > **Owners (code):** `src/frame.rs`, `src/convert.rs`, `src/wasm.rs` (frame and RGBA sections), `js/decoder.js` (`Frame`, `krKbFor`), `js/render.js`
 > **Related docs:** [decoder-core.md](./decoder-core.md), [js-api-and-worker.md](./js-api-and-worker.md), [`../performance.md`](../performance.md)
-> **Last verified against code:** 2026-11-12 @ `4386183`
+> **Last verified against code:** 2026-11-12 @ `162385f`
 
 ## Overview
 
-A decoded picture leaves rav1d as a `Frame`: the three planes copied into one
-tightly packed buffer with explicit geometry and the stream's colour
+A decoded picture leaves the decoder core as a `Frame`: the three planes in
+one tightly packed buffer with explicit geometry and the stream's colour
 metadata. From there it is either uploaded as planes to WebGL, where the
 shader does YUV to RGB, or converted to RGBA in wasm (SIMD128 in the SIMD
 builds) for a 2D canvas. The two conversions use the same Kr/Kb table so they
@@ -26,11 +26,11 @@ agree on colour.
 
 The packed layout is Y then U then V, no padding (`Frame::geometry`,
 `src/frame.rs:129-158`), which is exactly what WebCodecs' `I420` expects.
-`Frame::from_picture` copies row by row from rav1d's padded strides
-(`src/core_rav1d.rs:96-150`); that copy is the price of a frame that survives
-the next decode call. (A `rivet-av1` build has no such copy: rivet-av1 hands
-back a frame already packed this way and `src/core_rivet.rs:108-135` takes
-its buffer.)
+rivet-av1 hands back a frame already packed this way, so
+`frame_from_av1` (`src/core.rs:95-123`) takes its buffer and copies nothing.
+(`Frame::from_picture`, which copied a rav1d picture row by row, went with
+rav1d in 0.3.0; a `Frame`'s fields are public if one has to be built by
+hand.)
 
 ### Interfaces
 

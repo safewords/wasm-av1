@@ -1,12 +1,13 @@
 # wasm-av1
 
-AV1 decoding for the browser, in Rust: [rav1d] (the Rust port of dav1d)
-compiled to WebAssembly, in **baseline**, **SIMD128** and **threads** builds
-(rav1d's frame/tile worker threads as Web Workers on shared memory), behind
-the small streaming API that [GoogleChromeLabs/wasm-av1] put in front of
-libaom in 2018 — ported from C to Rust here. Containers (MP4, fragmented MP4 / CMAF,
-WebM/MKV, MPEG-TS) are demuxed inside the same wasm by [rivet]'s
-`rivet-container` crate.
+AV1 decoding for the browser, in Rust: [rivet-av1] (rivet's own AV1 decoder,
+written from the specification) compiled to WebAssembly, in **baseline**,
+**SIMD128** and **threads** builds (the decoder's tile and post-filter
+threads as Web Workers on shared memory), behind the small streaming API
+that [GoogleChromeLabs/wasm-av1] put in front of libaom in 2018 — ported
+from C to Rust here. Containers (MP4, fragmented MP4 / CMAF, WebM/MKV,
+MPEG-TS) are demuxed inside the same wasm by [rivet]'s `rivet-container`
+crate.
 
 Why: a site that serves AV1 wants it to play everywhere. Devices without an
 AV1 decoder — older phones and laptops, and Safari before AV1 hardware — get
@@ -14,24 +15,23 @@ a WebAssembly software decoder that the browser JIT compiles to NEON/SSE
 where the SIMD build is used, and that spreads over the cores where the page
 allows threads, instead of a fallback rung in another codec.
 
-**Nothing upstream is vendored.** rav1d and rivet-container are git
-dependencies (`Cargo.lock` pins the revisions); upstream wasm-av1 checked all
-of libaom into `third_party/`. rav1d comes from `safewords/rav1d` `main`
-(upstream + libc-free build, a panic fix, the wasm SIMD128 kernels, and worker
-threads on wasm through an embedder spawner — see
-[docs/rav1d.md](docs/rav1d.md)); rivet-container from rivet `develop`
-([docs/rivet.md](docs/rivet.md)). `pkg/` — the built `.wasm` + glue — is
-committed so a git dependency (`github:safewords/wasm-av1#sha`) carries it;
-`scripts/build.sh` regenerates it.
+**How fast it is, plainly.** Up to 0.2.2 the decoder was rav1d. Since 0.3.0
+it is rivet-av1 and nothing else, and it is slower: as measured on
+2026-11-12, rivet-av1 in wasm decodes 8-bit video at roughly a third to two
+thirds of rav1d's single-thread rate (10-bit comes close in the SIMD build),
+and it scales poorly with threads — 1.2 to 1.3 times on eight for a stream
+with one tile per frame, where rav1d reached about 3.5. The output is
+bit-exact. The performance work is under way in rivet-av1; the numbers, with
+rav1d kept as the baseline that work is measured against, are under
+[Performance](#performance) and in [docs/rivet-av1.md](docs/rivet-av1.md).
 
-**A second decoder core, off by default.** The crate also builds on
-[rivet]'s own AV1 decoder, `rivet-av1`, in place of rav1d (Cargo feature
-`rivet-av1`). It decodes every fixture here to the same MD5, in all four
-variants, and is about half as fast as rav1d in wasm; two things this
-README promises need rivet-av1 changes that are written but not upstream.
-Nothing that is built by CI, committed in `pkg/` or published uses it.
-[docs/rivet-av1.md](docs/rivet-av1.md) has what it is, what is missing and
-every number.
+**Nothing upstream is vendored.** rivet-av1 and rivet-container are git
+dependencies, two packages of rivet `develop` (`Cargo.lock` pins the
+revision; [docs/rivet-av1.md](docs/rivet-av1.md),
+[docs/rivet.md](docs/rivet.md)); upstream wasm-av1 checked all of libaom
+into `third_party/`. `pkg/` — the built `.wasm` + glue — is committed so a
+git dependency (`github:safewords/wasm-av1#sha`) carries it;
+`scripts/build.sh` regenerates it.
 
 **Feature docs:** [`docs/features/README.md`](docs/features/README.md) — each
 component as the code has it, with `path:line` references, and the known
@@ -42,26 +42,32 @@ defects.
 ## What you get
 
 ```
-pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     1.70 MB (604 KB gzip)   Chrome 96 / Firefox 89 / Safari 15
-pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 1.79 MB (634 KB gzip)   Chrome 91 / Firefox 89 / Safari 16.4
-pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  1.73 MB                 + cross-origin isolation (Safari 15.2)
-pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      1.82 MB                 + cross-origin isolation
-pkg/thread-worker.js               the Worker each rav1d thread runs in
+pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     3.03 MB (964 KB gzip)   Chrome 96 / Firefox 89 / Safari 15
+pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 3.47 MB (1.10 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
+pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  3.07 MB                 + cross-origin isolation (Safari 15.2)
+pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      3.52 MB                 + cross-origin isolation
+pkg/thread-worker.js               the Worker each decoder thread runs in
 js/                                ESM wrapper: loader + feature detection, Decoder, WebGL/2D renderers, Worker, Av1Player, HlsAv1Video
 ```
 
-(Without the `container` feature: ~600 KB less per variant.)
+Those sizes are a local build of 0.3.0 **without `wasm-opt`** (2026-11-12).
+CI runs `wasm-opt`, which about halved the rav1d builds (0.2.2 shipped
+1.70 MB baseline, 606 KB gzip, from 3.50 MB), and CI has not built 0.3.0
+yet. Most of each file is the demuxers: without the `container` feature the
+baseline build is 681 KB (268 KB gzip) and the SIMD build 871 KB (314 KB
+gzip), again without `wasm-opt`.
 
-The threads builds run rav1d's own frame + tile threading (dav1d's task
-pool) with each thread a Web Worker on the same shared memory. They need
-`SharedArrayBuffer`, i.e. a **cross-origin-isolated page**
-(`Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy:
-require-corp` on the document), and the decoder in a Worker (rav1d blocks its
-calling thread while workers decode). `loadWasmAv1({ threads: true })` picks
-one when `detectThreads()` says the page can; `Av1Player`/`HlsAv1Video` take
-`{ worker: true, threads: 'auto' }` and report `stats.threads`. Measured
-scaling is in [docs/performance.md](docs/performance.md): 1080p from 16 ms
-to 3 ms/frame on 8 threads in Chromium, bit-exact.
+The threads builds give the decoder a pool of Web Workers on the same shared
+memory: it decodes the tiles of a frame in parallel and runs the loop
+filter, CDEF and loop restoration in bands; frames are decoded one after
+another. They need `SharedArrayBuffer`, i.e. a **cross-origin-isolated
+page** (`Cross-Origin-Opener-Policy: same-origin` +
+`Cross-Origin-Embedder-Policy: require-corp` on the document), and the
+decoder in a Worker (it blocks its calling thread while the others work).
+`loadWasmAv1({ threads: true })` picks one when `detectThreads()` says the
+page can; `Av1Player`/`HlsAv1Video` take `{ worker: true, threads: 'auto' }`
+and report `stats.threads`. What threads buy depends on the stream's
+tiling, see [Performance](#performance).
 
 ```js
 import { loadWasmAv1, Decoder } from '@safewords/wasm-av1';
@@ -120,75 +126,102 @@ scoop install binaryen   # or apt/brew — wasm-opt, optional (~15% smaller)
 scripts/build.sh                                    # → pkg/{baseline,simd,threads,simd-threads}, pkg/thread-worker.js, pkg/manifest.json
 ```
 
-`FEATURES=bitdepth_8 scripts/build.sh` drops 10/12-bit support for a smaller
-decoder; `FEATURES=bitdepth_8,bitdepth_16 scripts/build.sh` drops the container
-demuxers. `FEATURES=rivet-av1,container scripts/build.sh` builds on rivet-av1
-instead of rav1d ([docs/rivet-av1.md](docs/rivet-av1.md); not what `pkg/`
-holds).
+`FEATURES= scripts/build.sh` (`FEATURES` set to nothing) builds without the
+default features, that is without the container demuxers: IVF and raw
+temporal units only, and under a quarter of the size. The crate has one Cargo
+feature, `container`; the decoder has none (every build decodes 8, 10 and
+12 bits).
+
+Commit a `pkg/` only from CI's build (it pins `wasm-opt`); after a local
+build, `git checkout -- pkg`. On macOS the script needs a GNU `sed` and
+`stat` and a newer shell than `/bin/bash`
+([docs/features/build-and-release.md](docs/features/build-and-release.md)).
 
 ## Testing — what runs, and what it proves
 
 | Command | Proves |
 |---|---|
-| `cargo test --release` | Native: IVF parser, geometry, colour conversion against a float reference; every fixture in `testdata/` decodes to **the same MD5 libdav1d and libaom produce** (8-bit, 10-bit, 4:4:4, mono, film grain, odd 177×99); push mode ≡ IVF mode; MP4/fMP4/WebM via rivet ≡ IVF. |
+| `cargo test --release` (and `--no-default-features`) | Native: IVF parser, geometry, colour conversion against a float reference; every fixture in `testdata/` decodes to **the same MD5 libdav1d and libaom produce** (8-bit, 10-bit, 4:4:4, mono, film grain, odd 177×99) on 1, 2 and 4 threads; film grain left out on request; push mode ≡ IVF mode; MP4/fMP4/WebM via rivet ≡ IVF. |
 | `cargo test --release --target wasm32-unknown-unknown --test wasm_convert` (± `RUSTFLAGS=-C target-feature=+simd128`) | Inside wasm, in Node: the RGBA dispatch equals the scalar path on 55 shape/matrix combinations — the SIMD build's v128 code included. |
-| `node --test test/decode.test.mjs` (after `scripts/build.sh`) | The built `.wasm`, both variants, same MD5s through the wasm-bindgen surface (so the SIMD kernels are bit-exact too); SIMD and baseline RGBA **byte-identical**; container path; CMAF segments pushed one by one; ms/frame. |
+| `node --test test/decode.test.mjs` (after `scripts/build.sh`) | The built `.wasm`, all four variants, same MD5s through the wasm-bindgen surface (so the SIMD kernels are bit-exact too); the two threads builds on 1, 2, 4 and 8 threads, each wasm thread a `worker_threads` Worker on the shared memory; `applyGrain: false`; SIMD and baseline RGBA **byte-identical**; container path; CMAF segments pushed one by one; ms/frame. |
 | `node test/browser.mjs` (needs Playwright — `PLAYWRIGHT_DIR` or a local install) | Headless Chromium + Firefox + WebKit × {baseline, simd, threads, simd-threads} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM, HLS/CMAF via `HlsAv1Video`}: every frame shown, correctly paced, pixels on the canvas, the thread count that ran — 54 combinations, on a cross-origin-isolated harness page. |
-| `node scripts/bench-browser.mjs` | Decode speed per thread count in the real engines (the threads table above), same frame hash in every configuration. |
+| `node scripts/bench-browser.mjs` | Decode speed per thread count in the real engines, same frame hash in every configuration. |
 | `scripts/bench.mjs` | Decode speed on real 360p/720p/1080p clips (`scripts/fetch-samples.sh`), with libdav1d MD5 check. |
 
 `scripts/make-fixtures.sh` regenerates `testdata/` with ffmpeg (libaom encode,
 libdav1d + libaom decode for the reference MD5s — they must agree or it aborts).
 
-## Performance (x86-64 laptop)
+## Performance
 
-Single thread, Node 22 / V8 (`scripts/bench.mjs`):
+Measured on 2026-11-12 on one Apple silicon laptop (Node 26 / V8, `.wasm`
+without `wasm-opt`), with the rav1d build of 0.2.x beside it, built the same
+way. rav1d is no longer in this project; its column is the baseline the
+performance work in rivet-av1 is measured against. Frames per second, one
+thread, decode only (median of 7):
 
-| clip | baseline decode | simd decode | speed-up | YUV→RGBA baseline → simd |
+| stream | baseline: rav1d | rivet-av1 (0.3.0) | SIMD: rav1d | rivet-av1 (0.3.0) |
 |---|---|---|---|---|
-| BBB 640×360 | 8.5 ms/frame (117 fps) | 5.9 ms (170 fps) | 1.4× | 0.68 → 0.24 ms (2.8×) |
-| BBB 1280×720 | 24.0 ms/frame (42 fps) | 9.0 ms (111 fps) | 2.7× | 2.7 → 0.9 ms (2.9×) |
-| BBB 1920×1080 | 43.2 ms/frame (23 fps) | 16.7 ms (60 fps) | 2.6× | 5.4 → 2.1 ms (2.6×) |
-| Sintel 1920×818 | 33.1 ms/frame (30 fps) | 18.2 ms (55 fps) | 1.8× | 4.1 → 1.6 ms (2.6×) |
+| fixture 320×180, 8-bit | 1163 | 576 (0.50×) | 1703 | 839 (0.49×) |
+| AOM `av1-1-b8-00-quantizer-20`, 352×288 | 188 | 101 (0.54×) | 281 | 176 (0.63×) |
+| AOM `av1-1-b10-00-quantizer-10`, 352×288 10-bit | 70.9 | 37.8 (0.53×) | 72.9 | 62.9 (0.86×) |
+| SVT-AV1 testsrc2, 1280×720 | 175 | 58.1 (0.33×) | 296 | 107 (0.36×) |
+| SVT-AV1 mandelbrot + noise, 1280×720 | 65.0 | 29.7 (0.46×) | 145 | 60.8 (0.42×) |
+| SVT-AV1 mandelbrot + noise, 1280×720 10-bit | 73.4 | 36.2 (0.49×) | 80.4 | 77.8 (0.97×) |
+| SVT-AV1 mandelbrot + noise, 1920×1080 | 31.8 | 15.1 (0.47×) | 73.8 | 31.5 (0.43×) |
 
-Threads, in the browsers (`scripts/bench-browser.mjs`, decode inside a
-Worker, same frame hash in every column):
+Threads, the SIMD + threads build in Node (each wasm thread a Worker on the
+shared memory), frames per second:
 
-| clip | engine | simd, 1 thread | 2 threads | 4 threads | 8 threads |
+| clip | core | 1 thread | 2 | 4 | 8 |
 |---|---|---|---|---|---|
-| BBB 1280×720 | Chromium | 8.5 ms/frame | 5.0 ms | 4.0 ms | 3.8 ms (2.2×) |
-| BBB 1920×1080 | Chromium | 16.0 ms/frame | 8.5 ms | 4.5 ms | 3.0 ms (5.3×) |
-| BBB 1280×720 | Firefox | 69.5 ms/frame | 41.2 ms | 32.8 ms | 28.2 ms (2.5×) |
-| BBB 1920×1080 | Firefox | 140.8 ms/frame | 73.9 ms | 40.6 ms | 25.4 ms (5.5×) |
-| BBB 1280×720 | WebKit | 11.2 ms/frame | 6.7 ms | 5.4 ms | — |
+| mandelbrot + noise 1280×720, one tile | rav1d | 141 | 256 | 375 | 497 (3.5×) |
+| | rivet-av1 (0.3.0) | 60.1 | 68.7 | 73.7 | 77.9 (1.3×) |
+| mandelbrot + noise 1920×1080, one tile | rav1d | 73.9 | 132 | 197 | 265 (3.6×) |
+| | rivet-av1 (0.3.0) | 31.5 | 36.2 | 31.7 | 42.3 (1.3×) |
+| mandelbrot + noise 1280×720, eight tiles | rav1d | 151 | 290 | 530 | 954 (6.3×) |
+| | rivet-av1 (0.3.0) | 62.8 | 112 | 174 | 210 (3.3×) |
 
-The SIMD build carries wasm SIMD128 kernels for rav1d's hot 8-bit paths —
-motion compensation (8-tap, warped), CDEF and the deblocking loop filter —
-written for this project on the `safewords/rav1d` branch, bit-exact against
-the scalar code. Firefox's wasm tier is ~4× slower than V8 on the same
-machine (browser test's decode column). Profile, method and what is left are
-in [docs/performance.md](docs/performance.md).
+Read: 0.3.0 decodes 8-bit video at a third to two thirds of the rate 0.2.x
+did, and where 0.2.x multiplied that by about 3.5 on eight threads, 0.3.0
+gains 1.3 unless the stream was encoded with several tiles. rivet-av1
+threads the tiles and the post-filters of one frame; rav1d threaded frames,
+and had SIMD kernels for 8-bit motion compensation and the loop filter that
+rivet-av1 does not have for wasm yet. Closing that is work in rivet-av1,
+under way; this crate takes it with `cargo update -p rivet-av1`. The whole
+table (fourteen streams, native too), the method, the profile and what the
+work consists of are in [docs/rivet-av1.md](docs/rivet-av1.md).
+
+Not measured with rivet-av1: the browsers, and the Big Buck Bunny and Sintel
+clips of [docs/performance.md](docs/performance.md), which holds the 0.2.x
+measurements (rav1d: 1080p at 62 fps on one thread and 333 on eight in Chromium,
+on an x86-64 laptop). The YUV→RGBA conversion is this crate's own
+and unchanged: 2.6 to 2.9 times faster in the SIMD build, byte-identical.
 
 ## Layout
 
 ```
 src/ivf.rs        IVF reader (upstream init_avx / blob-api.c)
 src/decoder.rs    run/next_frame/finished ring around the decoder core (upstream AVX_Decoder_*), IVF / container / push sources
-src/core_rav1d.rs the core: rav1d behind five calls (open, flush, send, send_pending, picture)
-src/core_rivet.rs the other core, feature `rivet-av1`: rivet-av1 behind the same five
+src/core.rs       the core: rivet-av1 behind four calls (open, flush, send, picture)
 src/frame.rs      packed planes + geometry + colour metadata (upstream buffer_frame)
 src/convert.rs    YUV→RGBA: scalar (any layout/depth) + wasm simd128 (8-bit 4:2:0), bit-identical
 src/wasm.rs       the wasm-bindgen surface (upstream EXPORTED_FUNCTIONS)
-src/threads.rs    the thread spawner for the threads builds (rav1d thread body → Worker; rivet-av1: a pool of them)
+src/threads.rs    the threads builds: a pool of Workers that runs rivet-av1's parallel jobs
 js/               loader, detect, decoder, render, worker, player, hls, thread-worker
 examples/decode_ivf.rs   native CLI (upstream test.c) — MD5, frame dumps, PPM, timings
-tests/, test/     native and Node tests;  test/browser.mjs the Playwright matrix (Chromium, Firefox, WebKit)
+tests/, test/     native and Node tests (test/threads-node.mjs: a threads build on real threads in Node);  test/browser.mjs the Playwright matrix (Chromium, Firefox, WebKit)
 scripts/          build.sh, bench.mjs (Node), bench-browser.mjs (threads, in the browsers), serve.mjs
-docs/             rav1d.md, rivet.md, rivet-av1.md, performance.md, integration.md
+docs/             rivet-av1.md, rivet.md, performance.md, integration.md, features/
 ```
 
-Licence: Apache-2.0 (as upstream). See NOTICE for what is linked and under what.
+Licence: this repository's own code is Apache-2.0 (as upstream). The
+decoder and the demuxers it is built with, rivet-av1 and rivet-container,
+are under the Open Encoding Attribution License 1.0, which is
+source-available and not open source: every `.wasm` built here, `pkg/` and
+the npm package included, contains them, so distributing one means carrying
+that licence and its notices along, and commercial use that reaches third
+parties owes a short visible credit. See NOTICE.
 
-[rav1d]: https://github.com/memorysafety/rav1d
+[rivet-av1]: https://github.com/safewords/rivet-av1
 [GoogleChromeLabs/wasm-av1]: https://github.com/GoogleChromeLabs/wasm-av1
 [rivet]: https://github.com/rivet-transcoder/rivet

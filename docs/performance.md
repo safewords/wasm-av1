@@ -1,15 +1,62 @@
-# Performance: what was measured, what was done about it, what is left
+# Performance: where it stands, and the rav1d baseline
 
-Single-thread numbers from `scripts/bench.mjs` under Node 22 (V8, the same
-engine as Chrome), on an x86-64 laptop, 2026-08-15/16; thread numbers from
+## Where 0.3.0 stands
+
+**0.3.0 is slower than every number in the rest of this file.** Those are
+0.2.x, which decoded with rav1d. Since 0.3.0 the decoder is rivet-av1, and
+as measured on 2026-11-12 (one Apple silicon machine, Node 26 / V8, both
+cores built the same way) it decodes 8-bit video in wasm at a third to two
+thirds of rav1d's rate on one thread:
+
+| stream, SIMD variant, one thread | rav1d (0.2.x) | rivet-av1 (0.3.0) | |
+|---|---|---|---|
+| SVT-AV1 testsrc2, 1280×720 | 296 fps | 107 fps | 0.36× |
+| SVT-AV1 mandelbrot + noise, 1280×720 | 145 | 60.8 | 0.42× |
+| SVT-AV1 mandelbrot + noise, 1920×1080 | 73.8 | 31.5 | 0.43× |
+| SVT-AV1 mandelbrot + noise, 1280×720 10-bit | 80.4 | 77.8 | 0.97× |
+| AOM `av1-1-b8-00-quantizer-20`, 352×288 | 281 | 176 | 0.63× |
+
+and it scales poorly with threads, because it threads the tiles and the
+post-filters of one frame where rav1d threaded frames:
+
+| SIMD + threads variant in Node | core | 1 thread | 2 | 4 | 8 |
+|---|---|---|---|---|---|
+| mandelbrot + noise 1280×720, one tile | rav1d | 141 fps | 256 | 375 | 497 (3.5×) |
+| | rivet-av1 | 60.1 | 68.7 | 73.7 | 77.9 (1.3×) |
+| mandelbrot + noise 1920×1080, one tile | rav1d | 73.9 | 132 | 197 | 265 (3.6×) |
+| | rivet-av1 | 31.5 | 36.2 | 31.7 | 42.3 (1.3×) |
+| mandelbrot + noise 1280×720, eight tiles | rav1d | 151 | 290 | 530 | 954 (6.3×) |
+| | rivet-av1 | 62.8 | 112 | 174 | 210 (3.3×) |
+
+So on that machine one thread still decodes these 720p clips above 60 frames
+a second and 1080p at about 30; a phone is 3 to 8 times slower, and threads
+will not make up for it on a stream with one tile. A player should start
+lower on the ladder than it did with 0.2.x and step up on measurement
+([integration.md](integration.md)). The full tables (fourteen streams,
+native and both wasm variants, sizes), the method and the profile are in
+[rivet-av1.md](rivet-av1.md). The performance work is under way in
+rivet-av1; the rav1d numbers, there and below, are the baseline it is
+measured against. The clips of this file (Big Buck Bunny, Sintel) and the
+browsers have not been measured with rivet-av1.
+
+What does not depend on the core is unchanged: the YUV → RGBA conversion
+below, and the requirements and the Worker arrangement of the threads
+builds.
+
+## The rav1d baseline (0.2.x)
+
+Everything from here on was measured with rav1d as the decoder, and the
+decoder-side explanations describe rav1d. Single-thread numbers from
+`scripts/bench.mjs` under Node 22 (V8, the same engine as Chrome), on an
+x86-64 laptop, 2026-08-15/16; thread numbers from
 `scripts/bench-browser.mjs` in Playwright's Chromium, Firefox and WebKit on
 the same machine, 2026-08-16. Clips from `scripts/fetch-samples.sh` (Big Buck
-Bunny and Sintel AV1, 30 fps, 10 s). Every configuration decodes to the
+Bunny and Sintel AV1, 30 fps, 10 s). Every configuration decoded to the
 libdav1d MD5 (checked in the same run).
 
-## Threads
+### Threads
 
-The threads builds (`+atomics`, shared memory, std rebuilt) run rav1d's own
+The threads builds (`+atomics`, shared memory, std rebuilt) ran rav1d's own
 frame + tile threading — dav1d's task pool, unchanged — with each thread a
 Web Worker holding another instance of the module on the same memory. Decode
 inside a Worker, frames consumed there, so this is decode alone:
@@ -36,7 +83,11 @@ Worker. `js/detect.js::detectThreads()` says whether the current context
 qualifies; `loadWasmAv1({ threads: true })` then picks `simd-threads` /
 `threads`, else falls back to `simd` / `baseline` — one code path either way.
 
-How it was made, in the order the problems came up:
+How it was made, in the order the problems came up. Points 1 and 6 hold for
+0.3.0 as they stand. Points 2 to 5 are rav1d's: rivet-av1 has no
+long-lived threads, no frame delay and no `parking_lot`, and its side of
+this is a pool of Workers behind `av1::parallel`
+([features/variants-and-threading.md](features/variants-and-threading.md)).
 
 1. rustc no longer adds the shared-memory linker flags for `+atomics` on
    `wasm32-unknown-unknown` (only the wasip1-threads target spec has them):
@@ -73,7 +124,7 @@ How it was made, in the order the problems came up:
    page (`spawnThread` message, answered by `WorkerDecoder`), which is never
    blocked. That also covers Safari 15.2–16.3, which has no nested Workers.
 
-## Decode, after the SIMD kernels
+### Decode, after the SIMD kernels
 
 | clip | baseline | simd | speed-up |
 |---|---|---|---|
@@ -85,12 +136,14 @@ How it was made, in the order the problems came up:
 Firefox (SpiderMonkey) decodes the 320×180 fixture in ~4–5 ms/frame where
 Chromium takes ~1 ms — about 4× slower — with the same correctness.
 
-Read: single-threaded software AV1 in wasm is now real-time at 1080p on a
-laptop and comfortable at 720p. An old phone is 3–8× slower than this laptop,
-so a player should start the fallback on the 360p/480p rung and step up on
-measurement (docs/integration.md).
+Read: with rav1d, single-threaded software AV1 in wasm was real-time at
+1080p on a laptop and comfortable at 720p. An old phone is 3–8× slower than
+this laptop, so a player should start the fallback on the 360p/480p rung and
+step up on measurement (docs/integration.md).
 
 ## YUV → RGBA (the explicit simd128 path in `convert.rs`)
+
+This crate's own code, the same in 0.3.0.
 
 | clip | baseline | simd | speed-up |
 |---|---|---|---|
@@ -102,7 +155,7 @@ Byte-identical output between the two (tested on every fixture, including
 the odd-width tail path). With the WebGL renderer this cost is skipped
 entirely — the planes go up as textures and the shader converts.
 
-## How the decode speed-up was found and made
+## How rav1d's decode speed-up was found and made
 
 Before the kernels, `+simd128` alone gave 1.0–1.1×: rav1d's DSP fallbacks
 are scalar loops that LLVM does not vectorise. `node --cpu-prof` on the SIMD
@@ -115,7 +168,7 @@ after:   15.8% mc::wasm::warp_affine_8x8   11.4% msac::decode_symbol_adapt   7.0
           5.9% mc::wasm::put_8tap   5.4% recon::decode_coefs   4.9% itx::inv_txfm_add   2.4% cdef::wasm            (5.5 s sampled)
 ```
 
-The kernels live in the rav1d fork (docs/rav1d.md): MC 8-tap put/prep (H, V,
+The kernels lived in the rav1d fork (`safewords/rav1d`, `55c4d09`): MC 8-tap put/prep (H, V,
 2-D), warp 8×8 (put and the compound `t` variant), CDEF filter block, loop
 filter — 8 bpc, wired as early returns in the `_rust` functions under
 `cfg(target_feature = "simd128")`, bit-exact by construction and by test.
@@ -123,7 +176,11 @@ One non-SIMD fix mattered as much as a kernel: the 2-D 8-tap path zeroed a
 34 KB intermediate on every call; for an 8×8 block that memset outweighed
 the filter.
 
-## What is left (in order of measured value)
+## What was left in rav1d (in order of measured value)
+
+Kept as a record of where a fast decoder's time goes; none of it is this
+project's work any more. What is left for rivet-av1 is in
+[rivet-av1.md](rivet-av1.md#closing-the-gap).
 
 1. `msac::rav1d_msac_decode_symbol_adapt` — 11% now. dav1d has SSE2 for it
    (compute the ≤16 `v` candidates at once, count the prefix, adapt the CDF
@@ -136,5 +193,4 @@ the filter.
    (per-TU overhead) and letting rav1d use more frame threads than
    ceil(√n) for throughput at the cost of latency (`max_frame_delay`).
 
-Cheap knobs: `bitdepth_8` only (smaller code) if every stream is 8-bit;
 `wasm-opt -O3` is already applied.

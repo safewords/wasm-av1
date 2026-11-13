@@ -7,14 +7,32 @@ The decoder driving loop, IVF/blob data-source, frame ring buffer, YUV→RGB
 conversion, WebGL renderer and demo page here derive from that project's
 decode-av1.c, blob-api.c, yuv-to-rgb.c, draw-image.js and index.html.
 
-It links, but does not include, the following at build time:
-  rav1d            https://github.com/memorysafety/rav1d       BSD-2-Clause
-                   (via https://github.com/safewords/rav1d, branch main — see docs/rav1d.md)
-  rivet-container  https://github.com/rivet-transcoder/rivet   Open Encoding Attribution License 1.0
-                   (optional, feature `container`; branch develop — see docs/rivet.md)
-  rivet-av1        https://github.com/rivet-transcoder/rivet   Open Encoding Attribution License 1.0
-                   (optional and off by default, feature `rivet-av1`, in place of rav1d;
-                   crates/av1 of branch develop, itself https://github.com/safewords/rivet-av1
-                   — see docs/rivet-av1.md)
-Their licence texts ship with their sources; a distribution that bundles a
-built .wasm carries their notices as their licences require.
+The AV1 decoder and the container demuxers are not part of this repository's
+source. They are git dependencies, compiled into every .wasm this project
+builds (pkg/, the npm package, the release artefacts):
+
+  rivet-av1        https://github.com/safewords/rivet-av1
+                   Copyright 2026 Ely Erin Fox
+                   Open Encoding Attribution License, Version 1.0
+                   The decoder core, in every build. Taken as crates/av1 of
+                   https://github.com/rivet-transcoder/rivet, branch develop
+                   — see docs/rivet-av1.md. An original implementation written
+                   from the AV1 Bitstream & Decoding Process Specification; it
+                   does not derive from libaom, dav1d, rav1d or any other AV1
+                   implementation.
+  rivet-container  https://github.com/rivet-transcoder/rivet
+                   Copyright 2026 Ely Erin Fox
+                   Open Encoding Attribution License, Version 1.0
+                   The demuxers, in builds with the `container` feature (the
+                   default, and what pkg/ holds) — see docs/rivet.md.
+
+The Open Encoding Attribution License 1.0 is source-available, not open
+source, and it is not the Apache License this repository's own code is
+under. Its text is LICENSE.md in each of those repositories. In short, and
+the licence's numbered terms control: §4 requires anyone who distributes the
+software, in source or built form — a .wasm from this project included — to
+give recipients a copy of that licence and to carry these notices forward;
+§5 requires commercial use that reaches third parties (a product shipped, a
+for-profit service run) to display the short attribution credit its
+Exhibit A specifies, in one of the places §5 lists. Personal, nonprofit,
+academic and government use owe no credit.

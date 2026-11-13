@@ -44,7 +44,7 @@ hls.loadSource(audio.url);                       // hls.js on the <video>: the c
 const v = new HlsAv1Video(canvas, {
   clock: () => video.currentTime,
   worker: true,                                  // decode + demux off the main thread
-  threads: 'auto',                               // rav1d worker threads, where the page is isolated (below)
+  threads: 'auto',                               // decoder threads, where the page is isolated (below)
   baseUrl: '/wasm-av1/',                         // where pkg/ is served
   workerUrl: '/wasm-av1/js/worker.js',           // where js/ is served (see "Serving")
   fetchText, fetchBytes,                         // add credentials for your media host if needed
@@ -63,8 +63,8 @@ flowchart TD
     V -->|parseMediaPlaylist| P[init.mp4 + seg-N.m4s]
     P -->|"setInitSegment(init) · pushSegment(seg)"| W
     subgraph W["WorkerDecoder — off the main thread"]
-        D["rivet demuxes init‖seg in wasm<br/>samples queued as temporal units"] --> R["rav1d: run() … nextFrame()<br/>frames with pts in the track timescale"]
-        R -.->|threads: 'auto'| T["rav1d frame/tile threads<br/>as Workers on shared memory"]
+        D["rivet demuxes init‖seg in wasm<br/>samples queued as temporal units"] --> R["rivet-av1: run() … nextFrame()<br/>frames with pts in the track timescale"]
+        R -.->|threads: 'auto'| T["tile and post-filter threads<br/>as Workers on shared memory"]
     end
     W -->|planes transferred per frame| HV["HlsAv1Video<br/>prefetch prefetchSeconds ahead of clock(),<br/>show the frame due at video.currentTime, drop late ones,<br/>seek() = flush + refill from the segment holding the target"]
     H -->|"clock: () => video.currentTime"| HV
@@ -97,9 +97,12 @@ take the intersection:
 
 Step **up** only after a few clean windows in a row (under 2 % dropped+late,
 no stall, network fine), one rung at a time. Start on a rung the device can
-plainly do (a laptop: 720p; a phone: 360p/480p). Single-threaded, the SIMD
-build decodes 720p at ~110 fps and 1080p at ~60 fps on a laptop
-(docs/performance.md); an old phone is 3–8× slower.
+plainly do, and lower than you would have with 0.2.x: since 0.3.0 the
+decoder is rivet-av1, which decodes 8-bit video at a third to two thirds of
+rav1d's rate. Single-threaded, the SIMD build decoded synthetic 720p clips
+at 61 to 107 fps and 1080p at 31 fps on an Apple silicon laptop
+(2026-11-12, docs/performance.md); an old phone is 3–8× slower, so a phone
+starts at 360p or below and a laptop at 480p/720p.
 
 ```mermaid
 flowchart LR
@@ -129,9 +132,14 @@ which shows as a short freeze while it decodes up to the clock again.
 
 ## Threads
 
-`threads: 'auto'` (one per logical core, at most 8) multiplies decode speed
-by 3–5× on 4–8 cores and, more visibly, brings the worst single frame down —
-1080p from 96 ms to 26 ms in Chromium. It needs `SharedArrayBuffer`, i.e. a
+`threads: 'auto'` (one per logical core, at most 8) spreads the tiles of a
+frame and its post-filters over the cores. How much that buys depends on the
+stream: measured on 8 threads, 1.2 to 1.3× for a stream with one tile per
+frame (what most encoders produce below 4K unless told otherwise) and 3.3×
+for one encoded with eight tiles. If you control the encoder, tiles are what
+make threads pay with this decoder. (0.2.x, with rav1d's frame threading,
+gained 3–5× whatever the tiling; docs/performance.md.) It needs
+`SharedArrayBuffer`, i.e. a
 **cross-origin-isolated document**: `Cross-Origin-Opener-Policy: same-origin`
 plus a `Cross-Origin-Embedder-Policy`. Which COEP value depends on where your
 media comes from:

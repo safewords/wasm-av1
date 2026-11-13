@@ -2,7 +2,7 @@
 # Regenerate testdata/: small AV1 IVF fixtures plus the MD5 of their decoded
 # output as ffmpeg's libdav1d sees it. The Rust tests and the Node tests decode
 # each fixture and must reproduce that MD5 exactly — AV1 decoding is normative,
-# so any difference is a bug in this crate (or in rav1d).
+# so any difference is a bug in this crate (or in rivet-av1).
 #
 # Needs an ffmpeg with libaom-av1 (encoder) and libdav1d (decoder). Run from the
 # repo root. Fixtures are a few hundred KB in total and are committed.

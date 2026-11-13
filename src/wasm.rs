@@ -29,7 +29,7 @@ pub fn simd_enabled() -> bool {
 }
 
 /// True when this .wasm was built with atomics + shared memory and can run
-/// rav1d's worker threads as Web Workers (`threads` > 1 in the constructor).
+/// the decoder's worker threads as Web Workers (`threads` > 1 in the constructor).
 /// Needs a cross-origin-isolated page and the decoder in a Worker.
 #[wasm_bindgen(js_name = "threadsSupported")]
 pub fn threads_supported() -> bool {
@@ -99,7 +99,7 @@ fn js_err(e: impl std::fmt::Display) -> JsError {
 impl Av1Decoder {
     /// `maxBuffered` frames kept ahead (default 10, upstream's
     /// `NUM_FRAMES_BUFFERED`); `applyGrain` toggles film-grain synthesis
-    /// (default true); `threads` rav1d worker threads (default 1; more only
+    /// (default true); `threads` decoder threads (default 1; more only
     /// on a build where `threadsSupported()` is true, else forced to 1 — see
     /// `threads()` for what was applied).
     #[wasm_bindgen(constructor)]
@@ -271,7 +271,7 @@ impl Av1Decoder {
         self.inner.truncate_queued_from(pts as i64) as u32
     }
 
-    /// Drop everything buffered, reset rav1d; IVF sources rewind.
+    /// Drop everything buffered, reset the decoder core; IVF sources rewind.
     pub fn flush(&mut self) -> Result<(), JsError> {
         self.inner.flush().map_err(js_err)
     }

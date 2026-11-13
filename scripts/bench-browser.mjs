@@ -1,6 +1,6 @@
 // Benchmark the variants in real browsers (Playwright), including the threads
 // builds, which need a cross-origin-isolated page — the in-process server
-// here sends COOP/COEP — and rav1d's worker threads as Web Workers, which
+// here sends COOP/COEP — and the decoder's worker threads as Web Workers, which
 // Node has no way to run.
 //
 //   node scripts/bench-browser.mjs [--files bbb-720p.ivf,bbb-1080p.ivf] [--frames 300]

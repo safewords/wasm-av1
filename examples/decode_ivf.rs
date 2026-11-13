@@ -6,7 +6,7 @@
 //! cargo run --release --example decode_ivf -- FILE.ivf --dump 30 40 # write frame0030.yuv … frame0039.yuv (packed planes)
 //! cargo run --release --example decode_ivf -- FILE.ivf --ppm 30     # write frame0030.ppm (RGBA conversion, as RGB)
 //! cargo run --release --example decode_ivf -- FILE.ivf --no-grain   # decode without film grain synthesis
-//! cargo run --release --example decode_ivf -- FILE.ivf --threads 4  # rav1d frame threads (native only)
+//! cargo run --release --example decode_ivf -- FILE.ivf --threads 4  # decoder threads
 //! ```
 //!
 //! The MD5 is over the packed planes of every frame in order — the same bytes

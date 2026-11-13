@@ -1,13 +1,14 @@
-// One rav1d worker thread: another instance of the same wasm module on the
+// One decoder worker thread: another instance of the same wasm module on the
 // same shared memory, in a Worker.
 //
 // Created by worker-client.js on the page at the decode Worker's request (or
 // by loader.js directly when a decoder runs on the page — which threads
-// cannot, but the path exists). It receives the compiled module, the shared memory and
-// the address of the thread body that rav1d handed to the spawner, runs the
-// body to completion (`__wasm_av1_thread_entry`), frees the thread's TLS and
-// stack, and closes. Copied into pkg/ by scripts/build.sh so it sits next to
-// the variants it instantiates.
+// cannot, but the path exists). It receives the compiled module, the shared
+// memory and the address of a thread body, and runs the body
+// (`__wasm_av1_thread_entry`): a pool worker that takes the decoder's parallel
+// jobs for as long as the instance lives. Should it return, the thread's TLS
+// and stack are freed and the Worker closes. Copied into pkg/ by
+// scripts/build.sh so it sits next to the variants it instantiates.
 
 self.onmessage = async ({ data }) => {
   const { glue, module, memory, ptr, stackSize } = data;
@@ -25,7 +26,7 @@ self.onmessage = async ({ data }) => {
   try {
     mod.__wasm_av1_thread_entry(ptr);
   } catch (e) {
-    // A trap here is a rav1d worker thread dying (a panic aborts); the other
+    // A trap here is a decoder worker thread dying (a panic aborts); the other
     // threads and the decoder will wait forever, so at least say where.
     console.error('wasm-av1: thread died:', e?.stack ?? e);
     throw e;

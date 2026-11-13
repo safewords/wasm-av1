@@ -7,9 +7,9 @@
 // which resolves relative to this file — fine for the demo, and for a build
 // that copies js/ and pkg/ side by side).
 //
-// A threads variant runs rav1d's worker threads as Web Workers (pkg/
+// A threads variant runs the decoder's worker threads as Web Workers (pkg/
 // thread-worker.js), each an instance of the same module on the shared
-// memory. rav1d asks for them through `globalThis.__wasmAv1SpawnThread`,
+// memory. The wasm asks for them through `globalThis.__wasmAv1SpawnThread`,
 // which this file installs in the context that instantiated the module. On a
 // page it creates the Worker right there. Inside a Worker (the normal case:
 // the decoder lives in one) it hands the request up to the page instead —
@@ -23,10 +23,10 @@ import { chooseVariant, detectBaseline, detectSimd, detectThreads } from './dete
 
 const runtimes = new Map();
 
-/** Stack of each rav1d worker thread (bytes, a multiple of 64 KiB). rav1d
- * runs fine on Rust's 2 MiB default natively and on the 1 MiB main stack of
- * the single-threaded build; 2 MiB leaves room. Allocated from the shared
- * heap per thread. */
+/** Stack of each decoder worker thread (bytes, a multiple of 64 KiB). The
+ * decoder runs fine on Rust's 2 MiB default natively and on the 1 MiB main
+ * stack of the single-threaded build; 2 MiB leaves room. Allocated from the
+ * shared heap per thread. */
 export const THREAD_STACK_SIZE = 2 * 1024 * 1024;
 
 /** memory (a shared WebAssembly.Memory) → the glue URL of the module it belongs to. */
@@ -51,7 +51,7 @@ function installThreadSpawner() {
 }
 
 /**
- * Create the Worker for one rav1d thread from a spawn request (see
+ * Create the Worker for one decoder thread from a spawn request (see
  * `installThreadSpawner`; WorkerDecoder calls it for the requests a decode
  * Worker forwards).
  * @param {{glue: string, module: WebAssembly.Module, memory: WebAssembly.Memory, ptr: number, stackSize: number}} msg

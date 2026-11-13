@@ -13,8 +13,8 @@ import { loadWasmAv1 } from './loader.js';
 import { createRenderer, WebGLRenderer } from './render.js';
 import { WorkerDecoder } from './worker-client.js';
 
-/** `threads` option → a count. 'auto' is one per logical core, capped at 8 (rav1d spreads
- * frame + tile work over them; beyond the core count they only contend). */
+/** `threads` option → a count. 'auto' is one per logical core, capped at 8 (the decoder
+ * spreads tile and post-filter work over them; beyond the core count they only contend). */
 export function resolveThreads(threads) {
   if (threads === 'auto') {
     const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 0;
@@ -32,7 +32,7 @@ export class Av1Player {
    * @param {string|URL} [opts.workerUrl]      the worker script (default: ./worker.js next to this file, resolved by the bundler);
    *                                           set it when serving js/ statically, e.g. `${baseUrl}js/worker.js`
    * @param {'auto'|'simd'|'baseline'|'threads'|'simd-threads'} [opts.variant='auto']
-   * @param {number|'auto'} [opts.threads=1]   rav1d worker threads (frame + tile threading), each a Worker on shared
+   * @param {number|'auto'} [opts.threads=1]   decoder threads (tiles and post-filters in parallel), each a Worker on shared
    *                                           memory: needs `worker: true` and a cross-origin-isolated page (COOP/COEP),
    *                                           else 1. 'auto' = one per logical core, at most 8. `stats.threads` says what ran.
    * @param {string|URL} [opts.baseUrl]        pkg/ directory

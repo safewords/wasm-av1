@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>wasm-av1 — AV1 in WebAssembly (rav1d)</title>
+<title>wasm-av1 — AV1 in WebAssembly (rivet-av1)</title>
 <style>
   :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #fafafa; --muted: #666; --line: #ddd; --accent: #7a3cff; }
   @media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #121212; --muted: #999; --line: #333; } }
@@ -27,7 +27,7 @@
 </head>
 <body>
 <main>
-  <h1>wasm-av1 <small>— AV1 decoded in WebAssembly by <a href="https://github.com/memorysafety/rav1d">rav1d</a>, a Rust port of <a href="https://github.com/GoogleChromeLabs/wasm-av1">GoogleChromeLabs/wasm-av1</a></small></h1>
+  <h1>wasm-av1 <small>— AV1 decoded in WebAssembly by <a href="https://github.com/safewords/rivet-av1">rivet-av1</a>, a Rust port of <a href="https://github.com/GoogleChromeLabs/wasm-av1">GoogleChromeLabs/wasm-av1</a></small></h1>
   <p class="lead">Pick an AV1 file — IVF, or MP4 / fragmented MP4 / WebM / MPEG-TS demuxed in-wasm by <a href="https://github.com/rivet-transcoder/rivet">rivet</a> — or one of the samples (<code>scripts/fetch-samples.sh</code> puts the BBB clips in place). Playback is paced by the stream's own timestamps.</p>
   <div class="env" id="env">detecting…</div>
 

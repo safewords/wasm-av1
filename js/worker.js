@@ -11,7 +11,7 @@
 // Messages out: ready | info | frame | finished | error | spawnThread | segment | switched
 //
 // `init.threads` > 1 asks for a threads runtime (loader.js picks one when the
-// page is cross-origin isolated) and that many rav1d worker threads; `ready`
+// page is cross-origin isolated) and that many decoder threads; `ready`
 // reports how many there are. Each thread is a Worker the *page* creates:
 // this Worker sends `spawnThread` up (WorkerDecoder answers) because it is
 // about to block waiting for those threads, and a Worker created from a

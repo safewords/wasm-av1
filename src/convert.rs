@@ -89,7 +89,8 @@ impl Coefficients {
 }
 
 /// True when this build carries the SIMD128 conversion (and, since it is the
-/// same compiler flag, when rav1d itself was compiled with SIMD128 enabled).
+/// same compiler flag, when the decoder core was compiled with its SIMD128
+/// kernels).
 pub const fn simd_enabled() -> bool {
     cfg!(all(target_arch = "wasm32", target_feature = "simd128"))
 }

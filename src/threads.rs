@@ -14,22 +14,15 @@
 //! shared memory and calls [`thread_entry`] with the address, which runs the
 //! body to completion.
 //!
-//! What asks, by core:
+//! Natively rivet-av1 starts scoped threads for every parallel job (the
+//! tiles of a frame, the bands of a post-filter) and joins them after it. A
+//! Worker is far too slow to start for that, so the `pool` here keeps its
+//! threads for the life of the instance and is the `av1::parallel::Runner`
+//! rivet-av1 hands each job to.
 //!
-//! * **rav1d** creates its worker threads when a decoder opens, through the
-//!   spawner registered with `rav1d::wasm_thread::set_thread_spawner`; they
-//!   live as long as that decoder.
-//! * **rivet-av1** starts scoped threads for every parallel job, which a
-//!   Worker is far too slow for, so the `pool` here keeps threads for the
-//!   life of the instance and is the `av1::parallel::Runner` rivet-av1 hands
-//!   each job to (feature `rivet-av1-pending`: that hook is not in rivet
-//!   `develop` yet, and without it a `rivet-av1` build has no threads on
-//!   wasm and this module is not compiled).
-//!
-//! The spawner returns as soon as the Worker is *requested*; the thread starts
-//! when its script has loaded. Neither core blocks on the start: rav1d's
-//! worker threads wait for the decoder context on a condvar, and the pool
-//! gives a job only to the threads that are already waiting for one.
+//! `spawn` returns as soon as the Worker is *requested*; the thread starts
+//! when its script has loaded. Nothing blocks on the start: the pool gives a
+//! job only to the threads that are already waiting for one.
 //!
 //! Requirements on the page: `crossOriginIsolated` (COOP + COEP headers), or
 //! there is no `SharedArrayBuffer` and the threads variant cannot even be
@@ -75,16 +68,6 @@ pub fn thread_entry(ptr: usize) {
     body();
 }
 
-/// Register the spawner with rav1d (once per instance).
-#[cfg(not(feature = "rivet-av1"))]
-pub fn install() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        rav1d::wasm_thread::set_thread_spawner(spawn);
-    });
-}
-
-#[cfg(feature = "rivet-av1-pending")]
 pub use pool::install;
 
 /// rivet-av1's threads: a pool of Workers that outlives every decoder.
@@ -96,7 +79,6 @@ pub use pool::install;
 /// each job: the pool is rivet-av1's [`av1::parallel::Runner`]. The thread
 /// that decodes takes part in every job, and a job is a loop over a shared
 /// queue, so a Worker that is not up yet is simply not waited for.
-#[cfg(feature = "rivet-av1-pending")]
 mod pool {
     use super::*;
     use std::sync::{Condvar, Mutex};

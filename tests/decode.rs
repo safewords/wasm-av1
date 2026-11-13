@@ -1,7 +1,7 @@
 //! Decode every fixture in `testdata/` and reproduce ffmpeg's MD5 of the
-//! decoded planes. AV1 decoding is normative: rav1d, libdav1d and libaom must
-//! agree bit for bit, so any mismatch here is a real bug — in plane packing,
-//! stride handling, bit depth, or the driving of rav1d.
+//! decoded planes. AV1 decoding is normative: rivet-av1, libdav1d and libaom
+//! must agree bit for bit, so any mismatch here is a real bug — in plane
+//! packing, bit depth, the driving of the decoder core, or the core itself.
 //!
 //! `testdata/NAME.ref` is `width height frames pix_fmt md5`, written by
 //! `scripts/make-fixtures.sh`.
@@ -119,9 +119,9 @@ fn every_fixture_matches_ffmpeg() {
 
 #[test]
 fn worker_threads_decode_the_same_pictures() {
-    // rav1d's frame + tile threading (what the wasm `threads` build runs as
-    // Web Workers) must be bit-exact with the single-threaded decode, and
-    // the end-of-stream drain must deliver the frames still in flight.
+    // The core's tile and post-filter threading (what the wasm `threads`
+    // build runs as Web Workers) must be bit-exact with the single-threaded
+    // decode, with every frame there and in order.
     for fx in fixtures() {
         let data = fs::read(&fx.ivf).unwrap();
         for threads in [2, 4] {
@@ -159,11 +159,10 @@ fn worker_threads_decode_the_same_pictures() {
 
 #[test]
 fn flush_at_any_point_leaves_a_working_decoder() {
-    // A reset now keeps the rav1d instance (its worker threads on wasm) and
-    // relies on rav1d's flush dropping *everything*, including a temporal
-    // unit it had only half consumed (a TU with a hidden frame + a shown
-    // one hands the second half back as "pending"). Flush after every
-    // possible run() count and decode the whole clip again each time.
+    // A reset must drop *everything*: the reference frames and headers, and
+    // the frames of a temporal unit that were decoded but did not fit into
+    // the ring yet. Flush after every possible run() count and decode the
+    // whole clip again each time.
     let fx = &fixtures()[0];
     let data = fs::read(&fx.ivf).unwrap();
     for threads in [1, 2] {
@@ -195,48 +194,50 @@ fn flush_at_any_point_leaves_a_working_decoder() {
     }
 }
 
-// rivet-av1 as rivet `develop` has it cannot leave film grain out; the
-// switch is behind `rivet-av1-pending` (docs/rivet-av1.md).
-#[cfg(all(feature = "rivet-av1", not(feature = "rivet-av1-pending")))]
-#[test]
-fn decoding_without_film_grain_is_refused_until_rivet_av1_has_the_switch() {
-    let refused = Decoder::new(Config {
-        apply_grain: false,
-        ..Config::default()
-    });
-    assert!(matches!(refused, Err(wasm_av1::Error::Open(_))));
-    // Grain applied, the default, matches the reference like any fixture
-    // (every_fixture_matches_ffmpeg covers the grain fixture).
-    assert!(Decoder::new(Config::default()).is_ok());
-}
-
-#[cfg(any(not(feature = "rivet-av1"), feature = "rivet-av1-pending"))]
 #[test]
 fn film_grain_is_applied_by_default_and_can_be_disabled() {
-    let fx = fixtures()
-        .into_iter()
-        .find(|f| f.name.contains("grain"))
-        .expect("grain fixture");
-    let data = fs::read(&fx.ivf).unwrap();
-    let (with, _) = decode_all(data.clone(), Config::default());
-    let (without, _) = decode_all(
-        data,
-        Config {
-            apply_grain: false,
-            ..Config::default()
-        },
-    );
-    assert_eq!(
-        md5_of(&with),
-        fx.md5,
-        "grain applied should match ffmpeg (which applies grain)"
-    );
-    assert_ne!(
-        md5_of(&with),
-        md5_of(&without),
-        "disabling grain must change the output"
-    );
-    assert_eq!(with.len(), without.len());
+    // The reference MD5s are of pictures with their grain (ffmpeg applies
+    // it). With `apply_grain: false` the grain fixture must come out
+    // different — the same frames, without the grain — and a stream that
+    // carries no grain must not change at all, on one thread or several.
+    for fx in fixtures() {
+        let data = fs::read(&fx.ivf).unwrap();
+        for threads in [1, 4] {
+            let (without, stats) = decode_all(
+                data.clone(),
+                Config {
+                    apply_grain: false,
+                    threads,
+                    ..Config::default()
+                },
+            );
+            assert_eq!(without.len() as u64, fx.frames, "{}: frame count", fx.name);
+            assert_eq!(stats.decode_errors, 0, "{}: errors", fx.name);
+            if fx.name.contains("grain") {
+                assert_ne!(
+                    md5_of(&without),
+                    fx.md5,
+                    "{}: disabling grain must change the output",
+                    fx.name
+                );
+                let (with, _) = decode_all(data.clone(), Config::default());
+                assert_eq!(md5_of(&with), fx.md5, "{}: grain applied", fx.name);
+                assert_eq!(
+                    (without[0].width, without[0].height, without[0].layout),
+                    (with[0].width, with[0].height, with[0].layout),
+                    "{}: the same pictures otherwise",
+                    fx.name
+                );
+            } else {
+                assert_eq!(
+                    md5_of(&without),
+                    fx.md5,
+                    "{}: no grain to leave out",
+                    fx.name
+                );
+            }
+        }
+    }
 }
 
 #[test]

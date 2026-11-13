@@ -85,7 +85,7 @@ export function detectThreads() {
  * none can run. `threads: true` prefers a threads build when the engine (and
  * the page's isolation) allow it — that is what `loadWasmAv1({ threads })`
  * asks with; a caller that only wants a *decoder* on the main thread must not
- * (rav1d blocks its calling thread with more than one thread, which browsers
+ * (the decoder blocks its calling thread with more than one thread, which browsers
  * forbid on the main thread).
  */
 export function chooseVariant({ threads = false } = {}) {

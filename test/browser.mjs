@@ -5,7 +5,7 @@
 //
 // The server sends COOP/COEP so the page is cross-origin isolated and the
 // threads variants can run (SharedArrayBuffer); the thread combos assert
-// that rav1d really ran with N worker threads (`stats.threads`).
+// that the decoder really ran with N threads (`stats.threads`).
 //
 // Not part of `npm test` (needs a Playwright install with browsers). Run with
 //   PLAYWRIGHT_DIR=/path/to/node_modules/playwright node test/browser.mjs
@@ -120,8 +120,8 @@ combos.push({ variant: 'simd', renderer: 'webgl', worker: true, hls: true });
 combos.push({ variant: 'simd', renderer: 'webgl', worker: true, hls: true, switchAt: 'boundary' });
 combos.push({ variant: 'simd', renderer: 'webgl', worker: false, hls: true, switchAt: 'boundary' });
 combos.push({ variant: 'simd', renderer: '2d', worker: true, hls: true, switchAt: 'now' });
-// Threads: rav1d's worker threads as Web Workers on shared memory. Only in a
-// Worker (rav1d blocks its caller), on the isolated page the server makes.
+// Threads: the decoder's worker threads as Web Workers on shared memory. Only
+// in a Worker (the decoder blocks its caller), on the isolated page the server makes.
 combos.push({ variant: 'simd-threads', renderer: 'webgl', worker: true, threads: 4 });
 combos.push({ variant: 'threads', renderer: '2d', worker: true, threads: 2 });
 combos.push({ variant: 'simd-threads', renderer: 'webgl', worker: true, threads: 4, file: 'testsrc-320x180-8bit.mp4' });

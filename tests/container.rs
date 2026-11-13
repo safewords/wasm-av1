@@ -136,8 +136,8 @@ fn cmaf_segments_pushed_one_by_one_decode_continuously() {
 #[test]
 fn cmaf_segments_decode_continuously_with_worker_threads() {
     // The production path (segment-fed, frames popped as they come) with
-    // rav1d's frame threading: frames cross the segment boundary in order,
-    // and the last ones in flight come out on end_of_stream.
+    // the core's threads: frames cross the segment boundary in order, and
+    // the last ones come out on end_of_stream.
     cmaf_segments_decode_continuously(4);
 }
 
@@ -316,7 +316,7 @@ fn rendition_switch_is_seamless(threads: u32) {
 
 #[test]
 fn truncating_at_a_boundary_the_decoder_passed_drops_nothing_useful() {
-    // The guard a player must apply: once rav1d has been handed a temporal
+    // The guard a player must apply: once the core has been handed a temporal
     // unit at or beyond the boundary, the boundary is gone — `next_queued_pts`
     // / `last_sent_pts` say so, and the player picks the next one.
     let mut dec = Decoder::new(Config::default()).unwrap();

@@ -1,9 +1,9 @@
 //! The decoder: an AV1 decoder core driven the way upstream drove libaom.
 //!
-//! The core is rav1d — which is what the comments below name — or, with the
-//! `rivet-av1` feature, rivet's own decoder; `src/core_*.rs` put both behind
-//! the same five calls. rivet-av1 decodes a temporal unit in one call, so
-//! with it the "pending input" and "in flight" states below never arise.
+//! The core is rivet-av1, rivet's own AV1 decoder, behind `src/core.rs`. It
+//! decodes a temporal unit in one call and returns the frames that unit
+//! shows: nothing is ever half taken or in flight, so the only state between
+//! calls is the frames that did not fit into the ring yet.
 //!
 //! Upstream's `AVX_Decoder` (`decode-av1.c`) is a pull model built for a
 //! `requestAnimationFrame` loop: the page calls `run()` once per tick, which
@@ -23,7 +23,7 @@
 //!   escape hatch for a caller that already has samples in hand; the decoder
 //!   itself never needed a container.
 //! * [`Decoder::finished`] is true only when the source is exhausted *and*
-//!   the decoder has been drained *and* the ring is empty. Upstream's returned
+//!   every decoded frame has been popped from the ring. Upstream's returned
 //!   as soon as the source was empty, and its demo page stopped painting with
 //!   frames still buffered.
 
@@ -48,10 +48,11 @@ pub struct Config {
     /// Apply film grain synthesis in the decoder (a per-frame CPU cost; the
     /// stream is still valid without it, just cleaner than the encoder meant).
     pub apply_grain: bool,
-    /// Worker threads of the decoder core (rav1d: frame + tile threading;
-    /// rivet-av1: tiles and post-filter bands). Natively any number; on
-    /// wasm only the `threads` build (atomics + shared memory) can run more
-    /// than one and other builds force 1 — see [`crate::THREADS_SUPPORTED`].
+    /// Threads the decoder core decodes with: the tiles of a frame in
+    /// parallel and the loop filter, CDEF and loop restoration in bands;
+    /// frames are decoded one after another. Natively any number; on wasm
+    /// only the `threads` build (atomics + shared memory) can run more than
+    /// one and other builds force 1 — see [`crate::THREADS_SUPPORTED`].
     /// With more than one thread the core blocks the calling thread while it
     /// waits for workers, so on wasm the decoder must live in a Worker.
     pub threads: u32,
@@ -75,7 +76,9 @@ pub enum Error {
     /// rivet could not demux the container, or its video track is not AV1.
     #[cfg(feature = "container")]
     Container(String),
-    /// The decoder could not be created.
+    /// The decoder could not be created. Nothing in rivet-av1 can fail
+    /// there, so [`Decoder::new`] does not return this today; it is kept so
+    /// that `new` can stay fallible.
     Open(CoreError),
     /// The core rejected the bitstream. The decoder is still usable; the
     /// offending temporal unit was dropped.
@@ -123,10 +126,10 @@ pub enum RunOutcome {
     Full,
     /// One temporal unit was consumed (and whatever frames it produced buffered).
     Consumed,
-    /// No input was available: the IVF is exhausted, or nothing has been
-    /// pushed since the last call. Pending pictures, if any, were drained.
+    /// No input was available: nothing has been pushed since the last call.
     Starved,
-    /// Everything is done: no input, nothing pending, ring may still hold frames.
+    /// The source is exhausted and everything it held is decoded; the ring
+    /// may still hold frames.
     EndOfStream,
 }
 
@@ -200,15 +203,6 @@ pub struct Decoder {
     /// The frame most recently handed out by [`Decoder::next_frame`]; upstream
     /// kept `ad_LastFrame` so the JS side could keep reading it until the next call.
     current: Option<Frame>,
-    /// True once we know rav1d has no more pictures for the input it has seen.
-    drained: bool,
-    /// Set after rav1d returned `TryAgain` from `send_data`: it wants pictures
-    /// pulled before it will take the rest of that data.
-    input_pending: bool,
-    /// A temporal unit went in since the last completed end-of-input drain,
-    /// so rav1d may still hold frames in flight (frame threading). Cleared
-    /// when [`Decoder::drain_in_flight`] finds nothing left.
-    needs_drain: bool,
     /// Size of the most recent decoded frame — what `width()`/`height()`
     /// answer in push mode, where there is no container header to ask.
     last_size: Option<(usize, usize)>,
@@ -221,7 +215,7 @@ pub struct Decoder {
     /// The `configOBUs` (sequence header) from the init segment's `av1C`, and
     /// whether the next pushed sample must be made to carry a sequence header
     /// — set by [`Decoder::set_init_segment`]. A rendition switch feeds a new
-    /// init + segments without a flush; rav1d then needs the new sequence
+    /// init + segments without a flush; the core then needs the new sequence
     /// header before that segment's keyframe, and not every encoder repeats
     /// it in every keyframe sample.
     #[cfg(feature = "container")]
@@ -231,7 +225,7 @@ pub struct Decoder {
     /// pts of the first and last sample of the segment most recently pushed.
     #[cfg(feature = "container")]
     last_segment_pts: Option<(i64, i64)>,
-    /// pts of the last temporal unit handed to rav1d, any source.
+    /// pts of the last temporal unit handed to the core, any source.
     last_sent_pts: Option<i64>,
     stats: Stats,
 }
@@ -247,16 +241,12 @@ pub fn effective_threads(config: &Config) -> u32 {
 
 impl Decoder {
     pub fn new(config: Config) -> Result<Decoder, Error> {
-        let inner = Core::open(&config).map_err(Error::Open)?;
         Ok(Decoder {
-            inner,
+            inner: Core::open(&config),
             config,
             source: None,
             ring: VecDeque::with_capacity(config.max_buffered),
             current: None,
-            drained: true,
-            input_pending: false,
-            needs_drain: false,
             last_size: None,
             #[cfg(feature = "container")]
             init_segment: None,
@@ -487,8 +477,8 @@ impl Decoder {
         }
     }
 
-    /// Push mode: pts of the next queued temporal unit (the one rav1d gets
-    /// next), if any is queued.
+    /// Push mode: pts of the next queued temporal unit (the one the core
+    /// gets next), if any is queued.
     pub fn next_queued_pts(&self) -> Option<i64> {
         match &self.source {
             Some(Source::Push { queue, .. }) => queue.front().map(|p| p.pts),
@@ -496,7 +486,7 @@ impl Decoder {
         }
     }
 
-    /// pts of the last temporal unit handed to rav1d, if any.
+    /// pts of the last temporal unit handed to the core, if any.
     pub fn last_sent_pts(&self) -> Option<i64> {
         self.last_sent_pts
     }
@@ -508,7 +498,7 @@ impl Decoder {
     /// has not reached is replaced — a new init segment and the other
     /// rendition's segments from a segment boundary at `pts` — with no flush,
     /// so nothing already decoded is lost and there is no gap on screen. The
-    /// caller must make sure rav1d has not gone past `pts`
+    /// caller must make sure the core has not gone past `pts`
     /// ([`Decoder::next_queued_pts`] / [`Decoder::last_sent_pts`]) and that
     /// what it pushes next starts on a keyframe (every CMAF segment does).
     pub fn truncate_queued_from(&mut self, pts: i64) -> usize {
@@ -523,7 +513,7 @@ impl Decoder {
         }
     }
 
-    /// Drop everything decoded or queued and reset rav1d, e.g. for a seek.
+    /// Drop everything decoded or queued and reset the core, e.g. for a seek.
     /// The IVF source, if any, rewinds to its first frame; a container source
     /// is forward-only in rivet and is dropped (set it again to replay).
     pub fn flush(&mut self) -> Result<(), Error> {
@@ -541,17 +531,14 @@ impl Decoder {
         Ok(())
     }
 
-    /// Start the core over: everything in flight, delayed or half taken is
-    /// dropped, and the headers with it. The worker threads survive (rav1d's
-    /// `flush` keeps its context; rivet-av1's belong to a pool), so on wasm
-    /// a seek does not tear Workers down and spawn them again.
+    /// Start the core over: every decoded frame is dropped, and the
+    /// reference frames and headers with them. The worker threads survive
+    /// (they belong to a pool, not to the core), so on wasm a seek does not
+    /// tear Workers down and spawn them again.
     fn reset_state(&mut self) -> Result<(), Error> {
         self.inner.flush();
         self.ring.clear();
         self.current = None;
-        self.drained = true;
-        self.input_pending = false;
-        self.needs_drain = false;
         self.last_sent_pts = None;
         #[cfg(feature = "container")]
         {
@@ -576,15 +563,10 @@ impl Decoder {
         }
     }
 
-    /// True when there is nothing left to decode or show. Settles one
-    /// [`Decoder::run`] after the last input was consumed: that call does the
-    /// end-of-input drain (frames still in flight in rav1d's worker threads).
+    /// True when there is nothing left to decode or show: the source is
+    /// exhausted and every frame it produced has been popped.
     pub fn finished(&self) -> bool {
-        self.source_done()
-            && !self.input_pending
-            && self.drained
-            && !self.needs_drain
-            && self.ring.is_empty()
+        self.source_done() && !self.inner.has_pictures() && self.ring.is_empty()
     }
 
     fn header_size(&self) -> Option<(usize, usize)> {
@@ -615,10 +597,10 @@ impl Decoder {
 
     /// Do a bounded slice of work — upstream `AVX_Decoder_run`.
     ///
-    /// If the ring has room: feed the next temporal unit to rav1d (or the rest
-    /// of one it did not finish taking) and move every picture that yields
-    /// into the ring. Call it once per animation frame, or in a loop until
-    /// [`RunOutcome::Full`]/[`RunOutcome::EndOfStream`] to fill up.
+    /// If the ring has room: decode the next temporal unit and move the
+    /// frames it shows into the ring. Call it once per animation frame, or
+    /// in a loop until [`RunOutcome::Full`]/[`RunOutcome::EndOfStream`] to
+    /// fill up.
     pub fn run(&mut self) -> Result<RunOutcome, Error> {
         if self.source.is_none() {
             return Err(Error::NoSource);
@@ -627,30 +609,10 @@ impl Decoder {
             return Ok(RunOutcome::Full);
         }
 
-        // Pictures the last call could not fit into the ring come first.
-        if !self.drained {
-            self.collect_pictures();
-            if self.ring.len() >= self.config.max_buffered {
-                return Ok(RunOutcome::Full);
-            }
-        }
-
-        // rav1d asked us to pull pictures before it takes the rest of the last input.
-        if self.input_pending {
-            match self.inner.send_pending() {
-                Ok(true) => self.input_pending = false,
-                Ok(false) => {
-                    self.collect_pictures();
-                    return Ok(RunOutcome::Consumed);
-                }
-                Err(e) => {
-                    self.input_pending = false;
-                    self.stats.decode_errors += 1;
-                    return Err(Error::Decode(e));
-                }
-            }
-            self.collect_pictures();
-            return Ok(RunOutcome::Consumed);
+        // Frames the last call could not fit into the ring come first.
+        self.collect_pictures();
+        if self.ring.len() >= self.config.max_buffered {
+            return Ok(RunOutcome::Full);
         }
 
         // Next temporal unit from whichever source.
@@ -675,17 +637,9 @@ impl Decoder {
         };
 
         let Some((data, pts)) = next else {
-            // Starved. Drain what rav1d still holds so `finished` can settle.
-            let source_done = self.source_done();
-            self.collect_pictures();
-            if source_done && self.drained && self.ring.len() < self.config.max_buffered {
-                // End of input: with frame threads there may still be frames
-                // in flight. A second `get_picture` right after a TryAgain is
-                // rav1d's drain — it waits for the next in-flight frame and
-                // returns it, or TryAgain when there is none left.
-                self.drain_in_flight();
-            }
-            return Ok(if source_done && self.drained {
+            // No input, and (the ring had room) every decoded frame is in
+            // the ring: the end if the source is exhausted, else starved.
+            return Ok(if self.source_done() {
                 RunOutcome::EndOfStream
             } else {
                 RunOutcome::Starved
@@ -694,69 +648,27 @@ impl Decoder {
 
         self.stats.temporal_units_in += 1;
         self.stats.bytes_in += data.len() as u64;
-        self.drained = false;
-        self.needs_drain = true;
         self.last_sent_pts = Some(pts);
-        match self.inner.send(data, pts) {
-            Ok(true) => {}
-            Ok(false) => self.input_pending = true,
-            Err(e) => {
-                self.stats.decode_errors += 1;
-                // The unit is dropped; the decoder itself is fine to continue.
-                self.drained = true;
-                return Err(Error::Decode(e));
-            }
+        if let Err(e) = self.inner.send(&data, pts) {
+            // The unit is dropped; the decoder itself is fine to continue.
+            self.stats.decode_errors += 1;
+            return Err(Error::Decode(e));
         }
         self.collect_pictures();
         Ok(RunOutcome::Consumed)
     }
 
-    /// End of input: pull frames still in flight in rav1d's worker threads.
-    /// rav1d's `get_picture` waits for one when called again after it said
-    /// TryAgain (its "drain" state, reset by the next `send_data`); this
-    /// keeps pulling until it says TryAgain twice in a row or the ring is
-    /// full. Single-threaded there is never anything in flight and the extra
-    /// call is a cheap TryAgain.
-    fn drain_in_flight(&mut self) {
-        while self.ring.len() < self.config.max_buffered {
-            match self.inner.picture() {
-                Ok(Some(frame)) => self.push_picture(frame),
-                Ok(None) | Err(_) => {
-                    // Nothing left in flight (an error here is a frame that
-                    // failed; nothing to keep).
-                    self.needs_drain = false;
-                    return;
-                }
-            }
-        }
-        // Ring full; the rest waits for the next call.
-    }
-
-    fn push_picture(&mut self, frame: Frame) {
-        self.last_size = Some((frame.width, frame.height));
-        self.ring.push_back(frame);
-        self.stats.frames_out += 1;
-    }
-
-    /// Move every picture rav1d has ready into the ring, up to capacity.
+    /// Move the frames the core has ready into the ring, up to capacity; the
+    /// rest stay in the core for the next call.
     fn collect_pictures(&mut self) {
         while self.ring.len() < self.config.max_buffered {
-            match self.inner.picture() {
-                Ok(Some(frame)) => self.push_picture(frame),
-                Ok(None) => {
-                    self.drained = true;
-                    return;
-                }
-                Err(_) => {
-                    // A picture-level error (e.g. a corrupt frame). Count it and
-                    // keep pulling; the core recovers at the next keyframe.
-                    self.stats.decode_errors += 1;
-                    self.drained = true;
-                    return;
-                }
-            }
+            let Some(frame) = self.inner.picture() else {
+                return;
+            };
+            self.last_size = Some((frame.width, frame.height));
+            self.ring.push_back(frame);
+            self.stats.frames_out += 1;
         }
-        // Ring is full; there may be more. `drained` stays as it was.
     }
 
     /// Pop the oldest buffered frame — upstream `AVX_Decoder_get_frame`.

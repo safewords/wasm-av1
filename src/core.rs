@@ -1,18 +1,20 @@
 //! The decoder core: rivet's own AV1 decoder (`rivet-av1`, imported as `av1`).
 //!
-//! The one place that names it. rivet-av1 decodes a temporal unit in one
-//! call and hands back the frames it shows, already packed the way
-//! [`Frame`] is (Y, U, V one after another, no padding, little-endian `u16`
-//! above 8 bits), so this is a thin adapter: it keeps the frames of the
-//! last unit until [`crate::decoder`] pulls them, and gives them the pts
-//! the unit came with. There is no frame delay and nothing in flight.
+//! Besides the thread pool in `threads.rs`, the one place that names it.
+//! rivet-av1 decodes a temporal unit in one call and hands back the frames
+//! it shows, already packed the way [`Frame`] is (Y, U, V one after another,
+//! no padding, little-endian `u16` above 8 bits), so this is a thin adapter:
+//! it keeps the frames of the last unit until [`crate::decoder`] pulls them,
+//! and gives them the pts the unit came with. There is no frame delay and
+//! nothing in flight.
 
 use std::collections::VecDeque;
 
 use crate::decoder::Config;
 use crate::frame::{ColorInfo, Frame, PixelLayout};
 
-/// What the core reports when it cannot open or cannot decode.
+/// What the decoder core reports when it rejects a temporal unit: rivet-av1's
+/// error (`Bitstream`, `Unsupported` or `InvalidInput`, each with a message).
 pub type CoreError = av1::Error;
 
 /// The name the core goes by in error messages.
@@ -32,38 +34,23 @@ pub(crate) struct Core {
 fn new_decoder(threads: usize, apply_grain: bool) -> av1::Decoder {
     let mut dec = av1::Decoder::new();
     dec.set_threads(threads);
-    #[cfg(feature = "rivet-av1-pending")]
     dec.set_apply_grain(apply_grain);
-    #[cfg(not(feature = "rivet-av1-pending"))]
-    let _ = apply_grain; // refused in `Core::open`
     dec
 }
 
 impl Core {
-    pub(crate) fn open(config: &Config) -> Result<Core, CoreError> {
-        // rivet-av1 as rivet `develop` has it always applies film grain; the
-        // switch is one of the changes waiting to go upstream.
-        #[cfg(not(feature = "rivet-av1-pending"))]
-        if !config.apply_grain {
-            return Err(av1::Error::Unsupported(
-                "decoding without film grain needs wasm-av1's `rivet-av1-pending` feature".into(),
-            ));
-        }
+    pub(crate) fn open(config: &Config) -> Core {
         let threads = crate::decoder::effective_threads(config) as usize;
-        #[cfg(all(
-            target_arch = "wasm32",
-            target_feature = "atomics",
-            feature = "rivet-av1-pending"
-        ))]
+        #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
         if threads > 1 {
             crate::threads::install(threads);
         }
-        Ok(Core {
+        Core {
             inner: new_decoder(threads, config.apply_grain),
             threads,
             apply_grain: config.apply_grain,
             ready: VecDeque::new(),
-        })
+        }
     }
 
     /// Forget the stream: reference frames, headers, anything decoded and
@@ -76,8 +63,10 @@ impl Core {
         self.ready.clear();
     }
 
-    /// Decode one temporal unit. Always takes all of it (`Ok(true)`).
-    pub(crate) fn send(&mut self, data: Vec<u8>, pts: i64) -> Result<bool, CoreError> {
+    /// Decode one temporal unit; the frames it shows wait for
+    /// [`Core::picture`]. On an error the unit is dropped and the next one
+    /// is decoded as usual.
+    pub(crate) fn send(&mut self, data: &[u8], pts: i64) -> Result<(), CoreError> {
         // A temporal unit begins with a temporal delimiter; MP4 and Matroska
         // samples come without theirs. rivet-av1 takes the delimiter as the
         // sign that whatever the last unit left unfinished (a frame header
@@ -85,21 +74,21 @@ impl Core {
         // every later frame would be "a frame in progress". Give it one —
         // a second in front of a unit that has its own changes nothing.
         self.inner.decode_all(&TEMPORAL_DELIMITER)?;
-        for f in self.inner.decode_all(&data)? {
+        for f in self.inner.decode_all(data)? {
             self.ready.push_back(frame_from_av1(f, pts));
         }
-        Ok(true)
+        Ok(())
     }
 
-    /// Nothing is ever left pending.
-    pub(crate) fn send_pending(&mut self) -> Result<bool, CoreError> {
-        Ok(true)
+    /// The next frame of the last temporal unit, `None` when all have been
+    /// pulled.
+    pub(crate) fn picture(&mut self) -> Option<Frame> {
+        self.ready.pop_front()
     }
 
-    /// The next frame of the last temporal unit, `Ok(None)` when all have
-    /// been pulled.
-    pub(crate) fn picture(&mut self) -> Result<Option<Frame>, CoreError> {
-        Ok(self.ready.pop_front())
+    /// True while frames of the last temporal unit have not been pulled.
+    pub(crate) fn has_pictures(&self) -> bool {
+        !self.ready.is_empty()
     }
 }
 

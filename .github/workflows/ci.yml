@@ -51,10 +51,10 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
-      # Optimised: rav1d in debug decodes the fixtures painfully slowly.
+      # Optimised: the decoder in debug decodes the fixtures painfully slowly.
       - run: cargo test --release
       - name: also without the container feature
-        run: cargo test --release --no-default-features --features bitdepth_8,bitdepth_16
+        run: cargo test --release --no-default-features
 
   wasm:
     name: build the variants, test them in Node

@@ -1,14 +1,17 @@
-// Drive the built .wasm (both variants) from Node exactly as a page would, and
-// hold it to the same reference MD5s as the native tests. Run `scripts/build.sh`
-// first; `npm test` does both.
+// Drive the built .wasm (all four variants) from Node exactly as a page would,
+// and hold it to the same reference MD5s as the native tests. Run
+// `scripts/build.sh` first; `npm test` does both.
 //
 // What this proves that `cargo test` cannot: the wasm-bindgen surface, the
 // pointer/length hand-off through wasm memory, that the SIMD build's RGBA is
-// byte-identical to the baseline's, and how fast each variant is under V8.
+// byte-identical to the baseline's, that the threads builds decode the same
+// pictures on 1, 2, 4 and 8 threads with each thread a Worker on the shared
+// memory, and how fast each variant is under V8.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -40,8 +43,8 @@ async function load(variant) {
 }
 
 /** Decode a whole IVF, hashing packed frames; returns {frames, md5, first, decodeMs}. */
-function decodeAll({ mod, wasm }, ivf, { rgba = false } = {}) {
-  const dec = new mod.Av1Decoder();
+function decodeAll({ mod, wasm }, ivf, { rgba = false, applyGrain = true } = {}) {
+  const dec = new mod.Av1Decoder(undefined, applyGrain);
   dec.setSourceIvf(ivf);
   const md5 = createHash('md5');
   const rgbaMd5 = createHash('md5');
@@ -108,6 +111,48 @@ for (const variant of ['baseline', 'simd']) {
       }
     }
   });
+}
+
+for (const variant of ['baseline', 'simd']) {
+  test(`${variant}: applyGrain false leaves the film grain out, and changes nothing else`, { skip: variant === 'simd' && !nodeHasSimd && 'node lacks wasm SIMD' }, async () => {
+    const m = await load(variant);
+    for (const fx of fixtures) {
+      const r = decodeAll(m, fx.ivf, { applyGrain: false });
+      assert.equal(r.frames, fx.frames, `${fx.name}: frame count`);
+      assert.equal(r.stats.decodeErrors, 0);
+      // The reference MD5s are of pictures with their grain: without it the
+      // grain fixture must differ, and a stream that carries none must not.
+      if (fx.name.includes('grain')) assert.notEqual(r.md5, fx.md5, `${fx.name}: grain left out`);
+      else assert.equal(r.md5, fx.md5, `${fx.name}: MD5`);
+    }
+  });
+}
+
+// The threads builds, with real threads: test/threads-node.mjs decodes every
+// fixture on N threads, each wasm thread a worker_threads Worker on the
+// shared memory. One process per run, so that a decoder left waiting for a
+// thread is a failed test and not a hung one.
+for (const variant of ['threads', 'simd-threads']) {
+  for (const threads of [1, 2, 4, 8]) {
+    test(`${variant}, ${threads} thread${threads > 1 ? 's' : ''}: every fixture matches ffmpeg's MD5`, { skip: variant === 'simd-threads' && !nodeHasSimd && 'node lacks wasm SIMD' }, () => {
+      const run = spawnSync(process.execPath, [path.join(root, 'test', 'threads-node.mjs'), variant, String(threads)], { encoding: 'utf8', timeout: 120000 });
+      assert.equal(run.error, undefined, `did not finish: ${run.error?.message}`);
+      assert.equal(run.status, 0, run.stderr);
+      const r = JSON.parse(run.stdout);
+      assert.equal(r.threadsSupported, true, 'threadsSupported() reports the build');
+      assert.equal(r.simd, variant === 'simd-threads', 'simdEnabled() reports the build');
+      assert.equal(r.applied, threads, 'the decoder runs with the threads asked for');
+      // The decoding thread is one of them; the rest are Workers, asked for once.
+      assert.equal(r.spawned, threads - 1, 'thread Workers asked for');
+      for (const fx of fixtures) {
+        // Before the Workers are up, and once they are waiting for work.
+        for (const pass of ['cold', 'warm']) {
+          assert.equal(r[pass][fx.name].frames, fx.frames, `${fx.name}, ${pass}: frame count`);
+          assert.equal(r[pass][fx.name].md5, fx.md5, `${fx.name}, ${pass}: MD5`);
+        }
+      }
+    });
+  }
 }
 
 test('SIMD and baseline RGBA output are byte-identical', { skip: !nodeHasSimd && 'node lacks wasm SIMD' }, async () => {

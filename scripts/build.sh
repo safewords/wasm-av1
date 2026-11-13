@@ -22,8 +22,7 @@
 #
 #   scripts/build.sh            # release, all variants
 #   scripts/build.sh --dev      # unoptimised, with debug info
-#   FEATURES=bitdepth_8 scripts/build.sh   # 8-bit-only decoder (smaller)
-#   FEATURES=rivet-av1,container scripts/build.sh   # rivet-av1 instead of rav1d (docs/rivet-av1.md)
+#   FEATURES= scripts/build.sh  # without the container demuxers (smaller): IVF and raw temporal units only
 #   VARIANTS="simd simd-threads" scripts/build.sh   # a subset
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -34,17 +33,18 @@ if [ "${1:-}" = "--dev" ]; then
   PROFILE=debug
   CARGO_PROFILE_FLAG=""
 fi
-FEATURES="${FEATURES:-}"
+# FEATURES unset: the crate's default features (`container`). Set, even to
+# nothing: exactly the features it names.
 FEATURE_FLAGS=()
-if [ -n "$FEATURES" ]; then
-  FEATURE_FLAGS=(--no-default-features --features "$FEATURES")
+FEATURES_LABEL=default
+if [ -n "${FEATURES+set}" ]; then
+  FEATURE_FLAGS=(--no-default-features)
+  FEATURES_LABEL="${FEATURES:-none}"
+  if [ -n "$FEATURES" ]; then
+    FEATURE_FLAGS+=(--features "$FEATURES")
+  fi
 fi
-# Which decoder core this build has, for the manifest: rav1d unless a
-# rivet-av1 feature is asked for (src/lib.rs picks the same way).
-case ",$FEATURES," in
-  *,rivet-av1,*|*,rivet-av1-pending,*) CORE=rivet-av1 ;;
-  *) CORE=rav1d ;;
-esac
+# The revision Cargo.lock pins a git dependency at, for the manifest.
 lock_rev() { sed -n "/^name = \"$1\"\$/{n;n;s/source = \".*#\(.*\)\"/\1/p}" Cargo.lock; }
 
 want_bindgen=$(sed -n '/^name = "wasm-bindgen"$/{n;s/version = "\(.*\)"/\1/p}' Cargo.lock)
@@ -117,11 +117,10 @@ cp js/thread-worker.js pkg/thread-worker.js
 cat > pkg/manifest.json <<EOF
 {
   "version": "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)",
-  "core": "$CORE",
-$( [ "$CORE" = rav1d ] && echo "  \"rav1d\": \"$(lock_rev rav1d)\"," )
-  "rivet": "$(lock_rev rivet-container)",
+  "core": "rivet-av1",
+  "rivet": "$(lock_rev rivet-av1)",
   "profile": "$PROFILE",
-  "features": "${FEATURES:-default}",
+  "features": "$FEATURES_LABEL",
   "threadWorker": "thread-worker.js",
   "variants": {
 $(first=1; for v in $VARIANTS; do

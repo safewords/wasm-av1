@@ -96,7 +96,7 @@ jobs:
           sha256sum safewords-wasm-av1-${VER}.tgz wasm-av1-pkg-${VER}.zip > SHA256SUMS
           cat SHA256SUMS
           {
-            echo "AV1 decoding for the browser: rav1d + wasm SIMD128 kernels + rivet demux; baseline, SIMD and threads builds (rav1d's worker threads as Web Workers on a cross-origin-isolated page). See README.md."
+            echo "AV1 decoding for the browser: rivet-av1 (rivet's own AV1 decoder) + rivet demux; baseline, SIMD and threads builds (the decoder's worker threads as Web Workers on a cross-origin-isolated page). See README.md."
             echo
             echo '```'
             echo "npm install @safewords/wasm-av1@${VER}"
@@ -111,7 +111,7 @@ jobs:
             echo "| file | bytes |"; echo "|---|---|"
             for f in pkg/baseline/wasm_av1_bg.wasm pkg/simd/wasm_av1_bg.wasm pkg/threads/wasm_av1_bg.wasm pkg/simd-threads/wasm_av1_bg.wasm; do echo "| $f | $(stat -c %s $f) |"; done
             echo
-            echo "rav1d: $(sed -n '/^name = "rav1d"$/{n;n;s/source = ".*#\(.*\)"/\1/p}' Cargo.lock)  ·  rivet-container: $(sed -n '/^name = "rivet-container"$/{n;n;s/source = ".*#\(.*\)"/\1/p}' Cargo.lock)"
+            echo "rivet (rivet-av1, rivet-container): $(sed -n '/^name = "rivet-av1"$/{n;n;s/source = ".*#\(.*\)"/\1/p}' Cargo.lock)"
           } > RELEASE_NOTES.md
       - name: GitHub Release
         env:

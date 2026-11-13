@@ -16,14 +16,15 @@ where the SIMD build is used, and that spreads over the cores where the page
 allows threads, instead of a fallback rung in another codec.
 
 **How fast it is, plainly.** Up to 0.2.2 the decoder was rav1d. Since 0.3.0
-it is rivet-av1 and nothing else, and it is slower: as measured on
-2026-11-12 after a first round of speed work, rivet-av1 in wasm decodes
-8-bit video at 0.54 to 0.88 of rav1d's single-thread rate (10-bit matches or
-beats it in the SIMD build),
-and it scales poorly with threads — 1.2 to 1.3 times on eight for a stream
-with one tile per frame, where rav1d reached about 3.5. The output is
-bit-exact. The performance work is under way in rivet-av1; the numbers, with
-rav1d kept as the baseline that work is measured against, are under
+it is rivet-av1 and nothing else. On one thread it is now level with or
+ahead of rav1d: as measured on 2026-11-13, 1.0 to 1.2 times rav1d's rate on
+8-bit 720p and 1080p video in both the SIMD and the baseline build, 2.5
+times on 10-bit in the SIMD build, and 0.87 on a synthetic test pattern.
+With threads it is still behind on streams with one tile per frame, which
+is most video: it gains 1.2 to 1.3 times on eight threads where rav1d gained
+about 3.5, because it threads the tiles and post-filters of one frame and
+not frames. That is the work under way in rivet-av1. The output is bit-exact.
+The numbers, with rav1d kept as the baseline, are under
 [Performance](#performance) and in [docs/rivet-av1.md](docs/rivet-av1.md).
 
 **Nothing upstream is vendored.** rivet-av1 and rivet-container are git
@@ -163,29 +164,27 @@ libdav1d + libaom decode for the reference MD5s — they must agree or it aborts
 
 ## Performance
 
-Measured on 2026-11-12 on one Apple silicon laptop (Node 26 / V8, `.wasm`
+Measured on 2026-11-13 on one Apple silicon laptop (Node 26 / V8, `.wasm`
 without `wasm-opt`), with the rav1d build of 0.2.x beside it, built the same
-way. rav1d is no longer in this project; its column is the baseline the
-performance work in rivet-av1 is measured against. Frames per second, one
-thread, decode only (median of 7). "first" is rivet-av1 as 0.3.0 first built
-it (`3c2c549`); "now" is the revision `Cargo.lock` pins and `pkg/` holds
-(`f6f1ee1`, the first round of speed work):
+way and taking turns with it in the same run. rav1d is no longer in this
+project; its column is the baseline the performance work in rivet-av1 is
+measured against. Frames per second, one thread, decode only (median of 7).
+"first" is rivet-av1 as 0.3.0 first built it (`3c2c549`); "now" is the
+revision `Cargo.lock` pins (`c753ea1`: the loop filter, inter prediction and
+the residual path, each rewritten from the specification's processes):
 
 | stream | baseline: rav1d | first | now | SIMD: rav1d | first | now |
 |---|---|---|---|---|---|---|
-| fixture 320×180, 8-bit | 1184 | 606 | 732 (0.62×) | 1771 | 853 | 1060 (0.60×) |
-| AOM `av1-1-b8-00-quantizer-20`, 352×288 | 201 | 102 | 150 (0.75×) | 291 | 179 | 218 (0.75×) |
-| AOM `av1-1-b10-00-quantizer-10`, 352×288 10-bit | 70.3 | 39.4 | 59.6 (0.85×) | 73.2 | 64.5 | 81.1 (1.11×) |
-| SVT-AV1 testsrc2, 1280×720 | 187 | 61.7 | 117 (0.63×) | 320 | 113 | 172 (0.54×) |
-| SVT-AV1 mandelbrot + noise, 1280×720 | 67.9 | 31.0 | 48.4 (0.71×) | 152 | 62.9 | 91.1 (0.60×) |
-| SVT-AV1 mandelbrot + noise, 1280×720 10-bit | 78.4 | 37.2 | 60.6 (0.77×) | 85.5 | 80.6 | 125 (1.46×) |
-| SVT-AV1 mandelbrot + noise, 1920×1080 | 33.5 | 15.6 | 23.9 (0.71×) | 78.8 | 33.3 | 49.0 (0.62×) |
+| SVT-AV1 mandelbrot + noise, 1280×720 | 69.1 | 31.4 | 73.3 (1.06×) | 154.1 | 64.3 | 178.9 (1.16×) |
+| SVT-AV1 mandelbrot + noise, 1280×720, eight tiles | 66.5 | 31.1 | 71.0 (1.07×) | 153.9 | 64.0 | 186.0 (1.21×) |
+| SVT-AV1 mandelbrot + noise, 1920×1080 | 34.1 | 16.0 | 34.1 (1.00×) | 80.1 | 33.4 | 89.7 (1.12×) |
+| SVT-AV1 mandelbrot + noise, 1280×720 10-bit | 78.6 | 37.4 | 80.7 (1.03×) | 86.4 | 81.0 | 217.1 (2.51×) |
+| SVT-AV1 testsrc2, 1280×720 | 188.0 | 63.1 | 177.0 (0.94×) | 323.6 | 114.4 | 283.0 (0.87×) |
 
 These were measured in rivet-av1's own harness, not re-measured through this
-package; its `docs/wasm-performance.md` has every stream, the native
-numbers, what each change bought and the profile of what is left. The thread
-figures below are from before that round and are unchanged by it: frame
-threading has not been started.
+package, with another benchmark running on the machine (good to a few
+percent); its `docs/wasm-performance.md` has the fourteen-stream tables for
+each piece of work, the native numbers and what each change bought.
 
 Threads, the SIMD + threads build in Node (each wasm thread a Worker on the
 shared memory), frames per second:
@@ -199,15 +198,15 @@ shared memory), frames per second:
 | mandelbrot + noise 1280×720, eight tiles | rav1d | 151 | 290 | 530 | 954 (6.3×) |
 | | rivet-av1 (0.3.0) | 62.8 | 112 | 174 | 210 (3.3×) |
 
-Read: 0.3.0 decodes 8-bit video at a third to two thirds of the rate 0.2.x
-did, and where 0.2.x multiplied that by about 3.5 on eight threads, 0.3.0
-gains 1.3 unless the stream was encoded with several tiles. rivet-av1
-threads the tiles and the post-filters of one frame; rav1d threaded frames,
-and had SIMD kernels for 8-bit motion compensation and the loop filter that
-rivet-av1 does not have for wasm yet. Closing that is work in rivet-av1,
-under way; this crate takes it with `cargo update -p rivet-av1`. The whole
-table (fourteen streams, native too), the method, the profile and what the
-work consists of are in [docs/rivet-av1.md](docs/rivet-av1.md).
+Read the thread table with care: it was measured on 2026-11-12, before the
+single-thread work above, so rivet-av1's one-thread column is out of date
+(it is about three times that now) while its scaling is not: where 0.2.x
+multiplied its rate by about 3.5 on eight threads, 0.3.0 gains 1.3 unless
+the stream was encoded with several tiles. rivet-av1 threads the tiles and
+the post-filters of one frame; rav1d threaded frames. Closing that is the
+work under way in rivet-av1; this crate takes it with
+`cargo update -p rivet-av1`. The method and the profiles are in
+[docs/rivet-av1.md](docs/rivet-av1.md).
 
 Not measured with rivet-av1: the browsers, and the Big Buck Bunny and Sintel
 clips of [docs/performance.md](docs/performance.md), which holds the 0.2.x

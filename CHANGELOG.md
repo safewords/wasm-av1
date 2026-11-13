@@ -66,10 +66,12 @@ becomes that release when it is tagged.
 
 - The two rivet packages come from rivet's `main` branch, which was brought
   up to `develop` on 2026-11-13; the revision is the same one.
-- rivet-av1 moves to `f6f1ee1` (rivet `7647f35`), the first round of its
-  speed work: one thread in wasm is 1.2 to 1.9 times faster than 0.3.0 first
-  built, at 0.54 to 0.88 of rav1d on 8-bit video and level with or ahead of
-  it on 10-bit in the SIMD build. Output is unchanged, bit for bit.
+- rivet-av1 moves to `c753ea1` (rivet `5680060`): its loop filter, inter
+  prediction and residual path rewritten from the specification's
+  processes. One thread in wasm is 2.2 to 2.9 times faster than 0.3.0 first
+  built, and level with or ahead of rav1d on 8-bit 720p and 1080p video in
+  both builds (0.87 of it on a synthetic test pattern). Output is unchanged,
+  bit for bit. Thread scaling on one-tile streams is not improved yet.
 - **Breaking, Rust API:** `Error::Open` and `Error::Decode` carry
   `wasm_av1::CoreError`, which is rivet-av1's `av1::Error` (`Bitstream`,
   `Unsupported` or `InvalidInput`, each with a message) where they carried

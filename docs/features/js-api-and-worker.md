@@ -22,7 +22,7 @@ frames as transferable buffers. Everything is exported from `js/index.js:14-20`.
 `pushTemporalUnit`, `setInitSegment`, `pushSegment`, `lastSegmentRange`,
 `nextQueuedPts`, `lastSentPts`, `truncateQueuedFrom`, `switchStream`,
 `setTimeBase`, `endOfStream`, `flush`, `run`, `runUntilFull`,
-`framesBuffered`, `finished`, `pendingInput`, `info()`, `stats()`,
+`framesBuffered`, `unitsInFlight`, `finished`, `pendingInput`, `info()`, `stats()`,
 `secondsOf`, `peekPts`, `peekSeconds`, `nextFrame`, `currentFrame`, `free`.
 `Run` mirrors the wasm `RunResult` (`js/decoder.js:143`).
 
@@ -85,6 +85,14 @@ transferred.
   and reschedules (`js/worker.js:50-55`); with a truncated IVF this repeats
   forever ([decoder-core.md](./decoder-core.md)).
 - `finished` is posted again on every `ack` after the end.
+- With threads the decoder hands frames back a few units after their data
+  went in, decoding them on the pool while the decode Worker is idle. Nothing
+  wakes the Worker when they are done, so when `run()` has no input left and
+  `unitsInFlight` is not 0 it looks again every 4 ms (`repoll` in
+  `js/worker.js`). Without that a live stream that never sends `eos` lost
+  its last frames in Firefox and WebKit; `test/browser.mjs` has the case.
+  A caller driving `Decoder` itself has to do the same: `Run.STARVED` with
+  `unitsInFlight > 0` means frames are still coming.
 - If the Worker dies, outstanding `_request` promises never resolve.
 - Bundlers only recognise the Worker if the URL is built inline in `new
   Worker(new URL(...))`; serving `js/` statically and passing `workerUrl` is

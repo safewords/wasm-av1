@@ -25,7 +25,10 @@
 //! * [`Decoder::finished`] is true only when the source is exhausted *and*
 //!   every decoded frame has been popped from the ring. Upstream's returned
 //!   as soon as the source was empty, and its demo page stopped painting with
-//!   frames still buffered.
+//!   frames still buffered. With more than one thread the core decodes
+//!   several frames at once and hands them back a few units late, so at the
+//!   end of the source [`Decoder::run`] first decodes what is still in
+//!   flight ([`Decoder::units_in_flight`]).
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -48,9 +51,13 @@ pub struct Config {
     /// Apply film grain synthesis in the decoder (a per-frame CPU cost; the
     /// stream is still valid without it, just cleaner than the encoder meant).
     pub apply_grain: bool,
-    /// Threads the decoder core decodes with: the tiles of a frame in
-    /// parallel and the loop filter, CDEF and loop restoration in bands;
-    /// frames are decoded one after another. Natively any number; on wasm
+    /// Threads the decoder core decodes with: the superblock rows of a
+    /// one-tile frame behind its parsing, the tiles of a frame of several,
+    /// and the loop filter, CDEF and loop restoration. With more than one
+    /// thread several frames are decoded at once, so a unit's frames come
+    /// out a few units after it went in, or when the input ends (see
+    /// [`Decoder::units_in_flight`]); with one, a unit's frames are there
+    /// when its [`Decoder::run`] returns. Natively any number; on wasm
     /// only the `threads` build (atomics + shared memory) can run more than
     /// one and other builds force 1 — see [`crate::THREADS_SUPPORTED`].
     /// With more than one thread the core blocks the calling thread while it
@@ -553,6 +560,16 @@ impl Decoder {
         self.ring.len()
     }
 
+    /// Temporal units the core has taken whose frames have not come out
+    /// yet. With more than one thread the core decodes several frames at
+    /// once, away from the thread that calls [`Decoder::run`], so a `run`
+    /// that returns [`RunOutcome::Starved`] may still have frames coming:
+    /// while this is not 0, calling `run` again later collects them without
+    /// any new input. Always 0 with one thread.
+    pub fn units_in_flight(&self) -> usize {
+        self.inner.in_flight()
+    }
+
     fn source_done(&self) -> bool {
         match &self.source {
             None => false,
@@ -637,12 +654,19 @@ impl Decoder {
         };
 
         let Some((data, pts)) = next else {
-            // No input, and (the ring had room) every decoded frame is in
-            // the ring: the end if the source is exhausted, else starved.
-            return Ok(if self.source_done() {
-                RunOutcome::EndOfStream
+            // No input. At the end of the source the units still in flight
+            // in the core are decoded now, and their frames collected (as
+            // many as the ring takes; the rest on the next calls): the end
+            // once the core has none left. Otherwise starved.
+            if !self.source_done() {
+                return Ok(RunOutcome::Starved);
+            }
+            self.stats.decode_errors += self.inner.finish();
+            self.collect_pictures();
+            return Ok(if self.inner.has_pictures() {
+                RunOutcome::Full
             } else {
-                RunOutcome::Starved
+                RunOutcome::EndOfStream
             });
         };
 
@@ -663,12 +687,14 @@ impl Decoder {
     fn collect_pictures(&mut self) {
         while self.ring.len() < self.config.max_buffered {
             let Some(frame) = self.inner.picture() else {
-                return;
+                break;
             };
             self.last_size = Some((frame.width, frame.height));
             self.ring.push_back(frame);
             self.stats.frames_out += 1;
         }
+        // Units of earlier calls that failed as their turn came.
+        self.stats.decode_errors += self.inner.take_dropped();
     }
 
     /// Pop the oldest buffered frame — upstream `AVX_Decoder_get_frame`.

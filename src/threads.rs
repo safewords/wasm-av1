@@ -18,7 +18,11 @@
 //! tiles of a frame, the bands of a post-filter) and joins them after it. A
 //! Worker is far too slow to start for that, so the `pool` here keeps its
 //! threads for the life of the instance and is the `av1::parallel::Runner`
-//! rivet-av1 hands each job to.
+//! rivet-av1 hands each job to. It takes two kinds of job: one the caller
+//! waits for (`Runner::run`: the tiles and filter bands of a frame decoded
+//! in place) and one it does not (`Runner::start`: the engine that decodes
+//! several frames at once, which goes on working on the pool's threads
+//! while the decode Worker is back in its event loop).
 //!
 //! `spawn` returns as soon as the Worker is *requested*; the thread starts
 //! when its script has loaded. Nothing blocks on the start: the pool gives a
@@ -81,7 +85,7 @@ pub use pool::install;
 /// queue, so a Worker that is not up yet is simply not waited for.
 mod pool {
     use super::*;
-    use std::sync::{Condvar, Mutex};
+    use std::sync::{Arc, Condvar, Mutex};
 
     /// A job as rivet-av1 hands it over, its borrow of the caller's stack
     /// erased so that the pool's threads can hold it. Sound because
@@ -91,10 +95,23 @@ mod pool {
     // SAFETY: the pointee is `Sync`; see `Job`.
     unsafe impl Send for Job {}
 
+    /// A job rivet-av1 started and does not wait for
+    /// (`Runner::start`: a decoder with several frames in flight decodes
+    /// on the pool while the thread that called it is away), the indices
+    /// `next..limit` nobody has taken yet, and the workers inside it.
+    struct Started {
+        job: Arc<dyn Fn(usize) + Send + Sync>,
+        next: usize,
+        limit: usize,
+        running: usize,
+    }
+
     #[derive(Default)]
     struct State {
         /// Workers asked for so far (each is running, or about to).
         spawned: usize,
+        /// Workers waiting for a job.
+        idle: usize,
         /// The job in progress, and the indices `next..limit` nobody has
         /// taken yet.
         job: Option<Job>,
@@ -102,6 +119,8 @@ mod pool {
         limit: usize,
         /// Workers inside the job.
         running: usize,
+        /// The job that was started, until every call of it has returned.
+        started: Option<Started>,
     }
 
     struct Pool {
@@ -115,10 +134,12 @@ mod pool {
     static POOL: Pool = Pool {
         state: Mutex::new(State {
             spawned: 0,
+            idle: 0,
             job: None,
             next: 0,
             limit: 0,
             running: 0,
+            started: None,
         }),
         work: Condvar::new(),
         idle: Condvar::new(),
@@ -130,6 +151,25 @@ mod pool {
         fn worker(&'static self) {
             let mut st = self.state.lock().unwrap();
             loop {
+                // A call of the started job, if one is still to be made.
+                if let Some(s) = st.started.as_mut().filter(|s| s.next < s.limit) {
+                    let k = s.next;
+                    s.next += 1;
+                    s.running += 1;
+                    let job = s.job.clone();
+                    drop(st);
+                    job(k);
+                    drop(job);
+                    st = self.state.lock().unwrap();
+                    let s = st.started.as_mut().expect("the started job");
+                    s.running -= 1;
+                    if s.running == 0 && s.next >= s.limit {
+                        // Every call was made and has returned: the pool
+                        // is free again.
+                        st.started = None;
+                    }
+                    continue;
+                }
                 match st.job {
                     Some(job) if st.next < st.limit => {
                         let k = st.next;
@@ -145,7 +185,11 @@ mod pool {
                             self.idle.notify_all();
                         }
                     }
-                    _ => st = self.work.wait(st).unwrap(),
+                    _ => {
+                        st.idle += 1;
+                        st = self.work.wait(st).unwrap();
+                        st.idle -= 1;
+                    }
                 }
             }
         }
@@ -155,9 +199,10 @@ mod pool {
         fn run(&self, n: usize, job: &(dyn Fn(usize) + Sync)) {
             {
                 let mut st = self.state.lock().unwrap();
-                if st.job.is_some() {
-                    // Another decoder's job has the pool (two decoders on
-                    // two threads of one instance): do this one alone.
+                if st.job.is_some() || st.started.is_some() {
+                    // Another job has the pool (two decoders on two
+                    // threads of one instance, or a decoder's frames in
+                    // flight): do this one alone.
                     drop(st);
                     return job(0);
                 }
@@ -183,6 +228,43 @@ mod pool {
                 st = self.idle.wait(st).unwrap();
             }
             st.job = None;
+        }
+
+        fn start(&self, n: usize, job: Arc<dyn Fn(usize) + Send + Sync>) -> usize {
+            let mut st = self.state.lock().unwrap();
+            if st.job.is_some() {
+                return 0;
+            }
+            // The calls added before, if this is the job already started,
+            // and those of them no Worker has taken yet.
+            let (before, untaken) = match &st.started {
+                None => (0, 0),
+                Some(s) if Arc::ptr_eq(&s.job, &job) => (s.limit - 1, s.limit - s.next),
+                Some(_) => return 0,
+            };
+            // A call for every Worker that is waiting right now and not
+            // already spoken for: one that has not come up yet is not
+            // promised (it may never), and is asked for again when
+            // rivet-av1 asks again.
+            let free = st.idle.saturating_sub(untaken);
+            let calls = (before + free).min(n.saturating_sub(1));
+            if calls <= before {
+                return 0;
+            }
+            match st.started.as_mut() {
+                Some(s) => s.limit = calls + 1,
+                None => {
+                    st.started = Some(Started {
+                        job,
+                        next: 1,
+                        limit: calls + 1,
+                        running: 0,
+                    })
+                }
+            }
+            drop(st);
+            self.work.notify_all();
+            calls - before
         }
     }
 

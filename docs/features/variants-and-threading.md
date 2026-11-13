@@ -1,32 +1,40 @@
 # wasm variants, detection and threading
 
-> **Status:** PARTIAL — the four variants work, and decode on real threads in the threads builds, in Chromium, Firefox and WebKit; threads buy little on a one-tile stream.
+> **Status:** PARTIAL — the four variants work, and decode on real threads in the threads builds, in Chromium, Firefox and WebKit; a stream with several tiles per frame gains little from more than four threads.
 > **Owners (code):** `js/detect.js`, `js/loader.js`, `src/threads.rs`, `js/thread-worker.js`, `scripts/build.sh`, `tools/wasm-copy-guard`, `Cargo.toml`
 > **Related docs:** [js-api-and-worker.md](./js-api-and-worker.md), [build-and-release.md](./build-and-release.md), [`../rivet-av1.md`](../rivet-av1.md), [`../performance.md`](../performance.md), [`../integration.md`](../integration.md)
-> **Last verified against code:** 2026-11-12 @ `162385f`
+> **Last verified against code:** 2026-11-13 @ the commit after `4aa6d72` (frames in flight)
 
 ## Overview
 
 There are four builds of the same crate under `pkg/`, and the loader picks one
 at run time. WebAssembly has no feature query, so detection validates tiny
 modules that use exactly the instruction in question. The threads builds run
-the decoder's parallel work — the tiles of a frame, and the loop filter,
-CDEF and loop restoration in bands — on a pool of Web Workers sharing one
-`WebAssembly.Memory`. That needs a cross-origin-isolated page (COOP + COEP)
-and the decoder itself in a Worker, because the decoding thread blocks on
-`memory.atomic.wait` while the others work.
+the decoder's parallel work on a pool of Web Workers sharing one
+`WebAssembly.Memory`: the superblock rows of a one-tile frame behind its
+parsing, the tiles of a frame of several, the loop filter, CDEF and loop
+restoration, and several frames at once. That needs a cross-origin-isolated
+page (COOP + COEP) and the decoder itself in a Worker, because the decoding
+thread blocks on `memory.atomic.wait` while it waits for the others.
 
-**What the variants buy, honestly.** Measured on 2026-11-12 with rivet-av1
-(Node / V8, one Apple silicon machine): the SIMD variant is 1.3 to 2.1
-times the baseline one. Threads are another matter: on eight threads a
+**What the variants buy, honestly.** Measured on 2026-11-13 with rivet-av1
+(Node / V8, one Apple silicon machine): the SIMD variant is 1.6 to 2.7
+times the baseline one on five 720p and 1080p clips. With threads, a
 stream with one tile per frame, which is what most encoders produce below
-4K, decodes 1.2 to 1.3 times as fast as on one, because only the
-post-filters are left to share out; a stream encoded with eight tiles
-reaches 3.3 to 3.6 times. rav1d, which 0.2.x used and which threaded whole
-frames, reached 2.8 to 3.6 times on the one-tile streams and 6.3 on the
-eight-tile one, from a single-thread rate two to three times higher. Frame
-threading is part of the performance work under way in rivet-av1;
-[`../rivet-av1.md`](../rivet-av1.md) has the tables.
+4K, decodes 3.7 times as fast on eight threads as on one at 720p and 4.2
+times at 1080p (175 / 308 / 477 / 652 and 85 / 158 / 258 / 360 frames per
+second on 1 / 2 / 4 / 8 threads). rav1d, which 0.2.x used, reached 3.4 and
+3.5 times on the same clips, from a lower one-thread rate: rivet-av1 is at
+1.3 times its rate on eight threads. A stream encoded with eight tiles is
+the other way round: 2.1 times on eight threads (178 / 286 / 380 / 372),
+where rav1d reached 6.3, so 0.39 of its rate there. A frame of several
+tiles is decoded as rivet-av1 did before, its tiles in parallel and its
+post-filters in bands, one frame at a time. In the browsers (Playwright's
+builds, the 720p clip, 1 / 4 / 8 threads): Chromium 168 / 404 / 595,
+WebKit 145 / 363 / 451, Firefox 14 / 44 / 62.
+[`../rivet-av1.md`](../rivet-av1.md) has the tables, and those of
+2026-11-12, when a one-tile stream gained 1.2 to 1.3 times from eight
+threads.
 
 | Variant | Rust flags (`scripts/build.sh:100-107`) | Engines |
 |---|---|---|
@@ -66,8 +74,13 @@ sequenceDiagram
   P->>T: new Worker(pkg/thread-worker.js), postMessage {module, memory, ptr}
   T->>T: import glue, init on the shared memory
   T->>R: __wasm_av1_thread_entry(ptr): Pool::worker, waits on a condvar
-  loop each parallel job of a frame
-    R->>T: job (tiles, or a post-filter's bands) to the threads that are waiting
+  loop frames in flight (one-tile frames, threads > 1)
+    R->>T: Runner::start: a job nobody waits for, to the threads that are waiting
+    T->>T: parse, reconstruct and filter rows of several frames
+    R->>R: the decoding thread returns to its caller, and polls for decoded units
+  end
+  loop each parallel job of a frame decoded in place (several tiles)
+    R->>T: Runner::run: job (tiles, or a post-filter's bands) to the threads that are waiting
     R->>R: the decoding thread works on the job too, then waits for them
   end
 ```
@@ -79,23 +92,50 @@ before 16.4 has no nested Workers (`js/loader.js:10-20`). On a page that
 instantiates a threads build directly the loader spawns the Worker itself
 (`js/loader.js:45-46`).
 
-The wasm side is `src/threads.rs`. Natively rivet-av1 starts scoped threads
-for each parallel job and joins them; a Worker cannot be started per job, so
-`mod pool` (`82-213`) keeps threads instead. `install(threads)` (`192-212`),
-called when a decoder opens with more than one thread (`src/core.rs:42-47`),
+The wasm side is `src/threads.rs`. Natively rivet-av1 runs its parallel
+work on threads of its own; a Worker cannot be started from Rust, so
+`mod pool` (`82-291`) keeps Workers instead. `install(threads)` (`270-290`),
+called when a decoder opens with more than one thread (`src/core.rs:62-66`),
 registers the pool once as rivet-av1's `av1::parallel::Runner` and asks for
 Workers until the instance has `threads - 1`; each runs `Pool::worker`
-(`130-151`) for ever. `Runner::run` (`155-186`) publishes the job, wakes
-the waiting workers, runs the job on the calling thread too, and returns
-when every worker that took part has left it. A job is a loop over a shared
-queue, so a Worker that has not come up yet is simply not waited for, and
-the first frames of a stream decode on fewer threads than asked for rather
-than later. The pool outlives every decoder: a flush (a new `av1::Decoder`)
-or a second decoder on the instance starts nothing. Two decoders decoding at
-once on two threads of one instance share it by turns: the one that finds
-the pool busy does its job alone (`158-163`). Mutexes and condvars are
-std's, which on wasm with atomics are `memory.atomic.wait` / `notify`; no
-dependency supplies them.
+(`147-191`) for ever. The runner has two entry points:
+
+- `Runner::run` (`195-227`) publishes a job, wakes the waiting workers,
+  runs the job on the calling thread too, and returns when every worker
+  that took part has left it. A job is a loop over a shared queue, so a
+  Worker that has not come up yet is simply not waited for, and the first
+  frames of a stream decode on fewer threads than asked for rather than
+  later. This is how a frame that is decoded in place is threaded (a frame
+  of several tiles, and everything when frames in flight is off).
+- `Runner::start` (`229-264`) takes a job nobody waits for and gives it to
+  the Workers that are waiting at that moment; rivet-av1 asks again later
+  for those that had not come up. This is what frames in flight run on:
+  the Workers go on decoding while the decoding thread is back in its
+  caller, between two `run()` calls. The job ends when rivet-av1 says so
+  (before it decodes anything in place, on a reset, when the decoder is
+  dropped), and until every call of it has returned the pool takes no
+  other job.
+
+The pool outlives every decoder: a flush (`Decoder::reset`) or a second
+decoder on the instance starts nothing. Two decoders decoding at once on
+two threads of one instance share it by turns: the one that finds the pool
+busy, with another's job or another's frames in flight, does its work
+alone (`198-204`). Mutexes and condvars are std's, which on wasm with
+atomics are `memory.atomic.wait` / `notify`; no dependency supplies them.
+
+**Frames in flight.** `src/core.rs` (`new_decoder`, `49-59`) turns it on
+for every decoder with more than one thread: as many frames as threads, at
+most 8, and at most 8 × 1920 × 1088 luma samples between them, so eight
+frames at 1080p and two at 4K. Each frame in flight holds its own buffers
+(some 20 bytes a luma sample at 4:2:0), which bounds it at about 330 MB of
+the 1 GiB a threads build may grow to. The cost is at the API: frames come
+out a few temporal units after their unit went in, and the end of the
+input is drained ([decoder-core.md](./decoder-core.md)). Because that
+decoding happens while the decode Worker is idle, nothing wakes the
+Worker when a frame is done: `js/worker.js` looks again every 4 ms while
+`unitsInFlight` is not 0 and it has no input (`repoll`), so that a live
+stream pushed unit by unit, with no end of stream, still delivers every
+frame.
 
 Thread count: `Av1Player` resolves `threads: 'auto'` to
 `hardwareConcurrency` capped at 8 (`js/player.js:18-24`).
@@ -156,7 +196,17 @@ Thread count: `Av1Player` resolves `threads: 'auto'` to
   Workers actually going away was not observed directly.
 - **The fixtures here are one tile and tiny**, so the tests prove that the
   threads builds decode correctly on a pool of real threads, not that they
-  are faster. The speed-up was measured separately on 720p clips (above).
+  are faster. The speed-up was measured separately on 720p and 1080p clips
+  (above).
+- **Several tiles per frame hold the threads back.** Such a frame is not a
+  job of the engine that has frames in flight, and after one of them the
+  next units are decoded in place too. An eight-tile 720p clip gains 2.1
+  times from eight threads and nothing from the last four.
+- **Memory with frames in flight** was bounded by arithmetic (about 330 MB)
+  and not measured, at 4K or anywhere else. An allocation the 1 GiB heap
+  cannot meet aborts the instance.
+- **Two decoders on one instance**: while one has frames in flight the pool
+  is its, and the other decodes on its own thread alone.
 - A thread Worker that fails to import or traps logs to the console and the
   decoder may wait forever (`js/thread-worker.js:19-32`): a worker that never
   comes up is not waited for, one that dies inside a job is. Nothing
@@ -174,12 +224,18 @@ Thread count: `Av1Player` resolves `threads: 'auto'` to
   (`tools/wasm-copy-guard`), above. decodeanywhere.dev's end-to-end suite
   found it, where it is marked as an expected failure in WebKit until a
   release carries the fix.
+- 2026-11-13: frame threading. rivet-av1 `03054ad` decodes a one-tile
+  frame's rows behind its parsing and several frames at once; the pool
+  gained `Runner::start`, `src/core.rs` queues its units, and the decode
+  Worker re-polls. `test/browser.mjs` has a live-push case for it (48
+  units pushed on four threads with no end of stream, 48 frames expected):
+  without the re-poll Firefox delivered 42 and WebKit 45.
 - [`../rivet-av1.md`](../rivet-av1.md): the core, its `av1::parallel` hook
-  (rivet-av1 `d041af0`) and wasm SIMD128 kernels (`3c2c549`), and every
-  measurement.
+  (rivet-av1 `d041af0`) and wasm SIMD128 kernels (`3c2c549`, `c753ea1`),
+  and every measurement.
 - 0.3.0, 2026-11-12: rav1d removed. Until then the threads were rav1d's own
   (its fork's embedder spawner, `parking_lot_core`'s `nightly` parker), one
-  set per decoder, frame threading included.
+  set per decoder, its frame threading included.
 - [`../performance.md`](../performance.md): what rav1d did with threads in
   the browsers (1080p from 16 ms to 3 ms a frame on 8 threads in Chromium),
   the baseline; and how the threads builds were made to work at all.

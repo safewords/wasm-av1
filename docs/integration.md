@@ -97,12 +97,17 @@ take the intersection:
 
 Step **up** only after a few clean windows in a row (under 2 % dropped+late,
 no stall, network fine), one rung at a time. Start on a rung the device can
-plainly do, and lower than you would have with 0.2.x: since 0.3.0 the
-decoder is rivet-av1, which decodes 8-bit video at a third to two thirds of
-rav1d's rate. Single-threaded, the SIMD build decoded synthetic 720p clips
-at 61 to 107 fps and 1080p at 31 fps on an Apple silicon laptop
-(2026-11-12, docs/performance.md); an old phone is 3–8× slower, so a phone
-starts at 360p or below and a laptop at 480p/720p.
+plainly do. Since 0.3.0 the decoder is rivet-av1, which on 8-bit 720p and
+1080p video is level with or ahead of the rav1d of 0.2.x, so a player that
+was tuned for 0.2.x can start where it did. Single-threaded, the SIMD build
+decoded a synthetic 720p clip at 168 fps in Chromium and 145 in WebKit and
+the 1080p one at 89 and 70, on an Apple silicon laptop (2026-11-13,
+docs/performance.md); an old phone is 3–8× slower and has not been
+measured with this decoder, so a phone starts at 360p/480p and a laptop at
+480p/720p. Firefox (Playwright's build) decoded the same clips about twelve
+times slower than Chromium on one thread (14 fps at 720p), as it did with
+the rav1d of 0.2.x: there, threads are what make 720p playable (62 fps on
+eight).
 
 ```mermaid
 flowchart LR
@@ -132,13 +137,37 @@ which shows as a short freeze while it decodes up to the clock again.
 
 ## Threads
 
-`threads: 'auto'` (one per logical core, at most 8) spreads the tiles of a
-frame and its post-filters over the cores. How much that buys depends on the
-stream: measured on 8 threads, 1.2 to 1.3× for a stream with one tile per
-frame (what most encoders produce below 4K unless told otherwise) and 3.3×
-for one encoded with eight tiles. If you control the encoder, tiles are what
-make threads pay with this decoder. (0.2.x, with rav1d's frame threading,
-gained 3–5× whatever the tiling; docs/performance.md.) It needs
+`threads: 'auto'` (one per logical core, at most 8) spreads the decoding
+over the cores. On a stream with one tile per frame, which is what most
+encoders produce below 4K unless told otherwise, the other threads
+reconstruct and filter a frame's rows behind its parsing and several
+frames are decoded at once: measured on 8 threads, 3.7× at 720p and 4.2×
+at 1080p, ahead of 0.2.x at every thread count (docs/performance.md). A
+stream encoded with several tiles per frame is decoded as before, tiles in
+parallel and one frame at a time, and stops gaining at about four threads
+(2.1× on 8 for an eight-tile 720p clip, where 0.2.x reached 6.3×). So
+encoding with tiles no longer helps this decoder, and for now it holds it
+back: if you control the encoder, one tile per frame is what makes threads
+pay.
+
+With more than one thread the decoder has several frames in flight (as
+many as threads, at most 8, and no more than eight 1080p frames' worth of
+samples, about 330 MB at the most), which changes two things for a caller:
+
+- **Output is a few temporal units behind input.** `Av1Player`,
+  `HlsAv1Video` and `WorkerDecoder` take care of it. If you drive
+  `Decoder` yourself: `run()` can return `Run.STARVED` while frames are
+  still being decoded on the threads, and `unitsInFlight` says how many
+  units have gone in without their frames having come out. While it is not
+  0, call `run()` again a little later (the decode Worker does, every 4 ms)
+  and the frames arrive with no new input. At the end of the stream (in
+  push mode, after `endOfStream()` as before) `run()` waits for what is in
+  flight, and `finished` is true once the last frame is popped.
+- **A damaged unit is reported when its turn comes**, a few units after it
+  went in, and counted in `stats.decodeErrors`. `flush()` drops everything
+  in flight.
+
+With one thread nothing is in flight and none of this applies. It needs
 `SharedArrayBuffer`, i.e. a
 **cross-origin-isolated document**: `Cross-Origin-Opener-Policy: same-origin`
 plus a `Cross-Origin-Embedder-Policy`. Which COEP value depends on where your

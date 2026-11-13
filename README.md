@@ -2,8 +2,8 @@
 
 AV1 decoding for the browser, in Rust: [rivet-av1] (rivet's own AV1 decoder,
 written from the specification) compiled to WebAssembly, in **baseline**,
-**SIMD128** and **threads** builds (the decoder's tile and post-filter
-threads as Web Workers on shared memory), behind the small streaming API
+**SIMD128** and **threads** builds (the decoder's threads as Web Workers on
+shared memory), behind the small streaming API
 that [GoogleChromeLabs/wasm-av1] put in front of libaom in 2018 — ported
 from C to Rust here. Containers (MP4, fragmented MP4 / CMAF, WebM/MKV,
 MPEG-TS) are demuxed inside the same wasm by [rivet]'s `rivet-container`
@@ -16,15 +16,16 @@ where the SIMD build is used, and that spreads over the cores where the page
 allows threads, instead of a fallback rung in another codec.
 
 **How fast it is, plainly.** Up to 0.2.2 the decoder was rav1d. Since 0.3.0
-it is rivet-av1 and nothing else. On one thread it is now level with or
-ahead of rav1d: as measured on 2026-11-13, 1.0 to 1.2 times rav1d's rate on
-8-bit 720p and 1080p video in both the SIMD and the baseline build, 2.5
-times on 10-bit in the SIMD build, and 0.87 on a synthetic test pattern.
-With threads it is still behind on streams with one tile per frame, which
-is most video: it gains 1.2 to 1.3 times on eight threads where rav1d gained
-about 3.5, because it threads the tiles and post-filters of one frame and
-not frames. That is the work under way in rivet-av1. The output is bit-exact.
-The numbers, with rav1d kept as the baseline, are under
+it is rivet-av1 and nothing else, and it is level with or ahead of rav1d on
+the video most sites serve. As measured on 2026-11-13: on one thread, 1.0 to
+1.2 times rav1d's rate on 8-bit 720p and 1080p video in both the SIMD and
+the baseline build, 2.5 times on 10-bit in the SIMD build, and 0.87 on a
+synthetic test pattern. With threads, on streams with one tile per frame
+(which is most video), 1.3 times rav1d's rate on four and on eight threads:
+it decodes several frames at once, as rav1d did. On a stream encoded with
+eight tiles it is behind with threads (0.39 of rav1d's rate on eight),
+because frames of several tiles are still decoded one at a time. The output
+is bit-exact. The numbers, with rav1d kept as the baseline, are under
 [Performance](#performance) and in [docs/rivet-av1.md](docs/rivet-av1.md).
 
 **Nothing upstream is vendored.** rivet-av1 and rivet-container are git
@@ -63,9 +64,13 @@ feature a local build without `wasm-opt` is 681 KB baseline (268 KB gzip)
 and 871 KB SIMD (314 KB gzip).
 
 The threads builds give the decoder a pool of Web Workers on the same shared
-memory: it decodes the tiles of a frame in parallel and runs the loop
-filter, CDEF and loop restoration in bands; frames are decoded one after
-another. They need `SharedArrayBuffer`, i.e. a **cross-origin-isolated
+memory. A frame of one tile is parsed on one thread while the others
+reconstruct and filter its rows behind the parsing, and up to eight frames
+are decoded at once; a frame of several tiles has its tiles decoded in
+parallel and its filters run in bands. With more than one thread a frame
+therefore comes out a few temporal units after its data went in, or when
+the input ends (`unitsInFlight` says how many are still to come); with one
+thread there is no delay. They need `SharedArrayBuffer`, i.e. a **cross-origin-isolated
 page** (`Cross-Origin-Opener-Policy: same-origin` +
 `Cross-Origin-Embedder-Policy: require-corp` on the document), and the
 decoder in a Worker (it blocks its calling thread while the others work).
@@ -155,7 +160,7 @@ build, `git checkout -- pkg`. On macOS the script needs a GNU `sed` and
 | `cargo test --release --target wasm32-unknown-unknown --test wasm_convert` (± `RUSTFLAGS=-C target-feature=+simd128`) | Inside wasm, in Node: the RGBA dispatch equals the scalar path on 55 shape/matrix combinations — the SIMD build's v128 code included. |
 | `node --test test/decode.test.mjs` (after `scripts/build.sh`) | The built `.wasm`, all four variants, same MD5s through the wasm-bindgen surface (so the SIMD kernels are bit-exact too); the two threads builds on 1, 2, 4 and 8 threads, each wasm thread a `worker_threads` Worker on the shared memory; `applyGrain: false`; SIMD and baseline RGBA **byte-identical**; container path; CMAF segments pushed one by one; ms/frame. |
 | `node --test test/copy-guard.test.mjs` | `tools/wasm-copy-guard`, the post-link pass the threads builds get for WebKit: every `memory.copy`/`memory.fill` becomes a call, and both paths of its helpers behave as memmove/memset and still trap out of bounds. |
-| `node test/browser.mjs` (needs Playwright — `PLAYWRIGHT_DIR` or a local install) | Headless Chromium + Firefox + WebKit × {baseline, simd, threads, simd-threads} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM, HLS/CMAF via `HlsAv1Video`}: every frame shown, correctly paced, pixels on the canvas, the thread count that ran — 54 combinations, on a cross-origin-isolated harness page. |
+| `node test/browser.mjs` (needs Playwright — `PLAYWRIGHT_DIR` or a local install) | Headless Chromium + Firefox + WebKit × {baseline, simd, threads, simd-threads} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM, HLS/CMAF via `HlsAv1Video`}: every frame shown, correctly paced, pixels on the canvas, the thread count that ran: 21 combinations per engine, on a cross-origin-isolated harness page. And per engine a live stream on four threads, pushed unit by unit with no end of stream: every frame arrives, though the last are still being decoded when the input runs out. |
 | `node scripts/bench-browser.mjs` | Decode speed per thread count in the real engines, same frame hash in every configuration. |
 | `scripts/bench.mjs` | Decode speed on real 360p/720p/1080p clips (`scripts/fetch-samples.sh`), with libdav1d MD5 check. |
 
@@ -171,7 +176,8 @@ project; its column is the baseline the performance work in rivet-av1 is
 measured against. Frames per second, one thread, decode only (median of 7).
 "first" is rivet-av1 as 0.3.0 first built it (`3c2c549`); "now" is the
 revision `Cargo.lock` pins (`c753ea1`: the loop filter, inter prediction and
-the residual path, each rewritten from the specification's processes):
+the residual path, each rewritten from the specification's processes; the
+pinned revision is now `03054ad`, whose one-thread rate is within about 1 % of it):
 
 | stream | baseline: rav1d | first | now | SIMD: rav1d | first | now |
 |---|---|---|---|---|---|---|
@@ -187,29 +193,43 @@ percent); its `docs/wasm-performance.md` has the fourteen-stream tables for
 each piece of work, the native numbers and what each change bought.
 
 Threads, the SIMD + threads build in Node (each wasm thread a Worker on the
-shared memory), frames per second:
+shared memory), frames per second by the wall clock of the whole decode.
+Measured on 2026-11-13 through this package's build of rivet-av1 `03054ad`,
+the rav1d build taking turns with it (median of three rounds of three
+decodes):
 
 | clip | core | 1 thread | 2 | 4 | 8 |
 |---|---|---|---|---|---|
-| mandelbrot + noise 1280×720, one tile | rav1d | 141 | 256 | 375 | 497 (3.5×) |
-| | rivet-av1 (0.3.0) | 60.1 | 68.7 | 73.7 | 77.9 (1.3×) |
-| mandelbrot + noise 1920×1080, one tile | rav1d | 73.9 | 132 | 197 | 265 (3.6×) |
-| | rivet-av1 (0.3.0) | 31.5 | 36.2 | 31.7 | 42.3 (1.3×) |
-| mandelbrot + noise 1280×720, eight tiles | rav1d | 151 | 290 | 530 | 954 (6.3×) |
-| | rivet-av1 (0.3.0) | 62.8 | 112 | 174 | 210 (3.3×) |
+| mandelbrot + noise 1280×720, one tile | rav1d | 146 | 269 | 376 | 496 (3.4×) |
+| | rivet-av1 | 175 | 308 | 477 | 652 (3.7×) |
+| mandelbrot + noise 1920×1080, one tile | rav1d | 76 | 137 | 198 | 267 (3.5×) |
+| | rivet-av1 | 85 | 158 | 258 | 360 (4.2×) |
+| mandelbrot + noise 1280×720, eight tiles | rav1d | 152 | 290 | 523 | 956 (6.3×) |
+| | rivet-av1 | 178 | 286 | 380 | 372 (2.1×) |
 
-Read the thread table with care: it was measured on 2026-11-12, before the
-single-thread work above, so rivet-av1's one-thread column is out of date
-(it is about three times that now) while its scaling is not: where 0.2.x
-multiplied its rate by about 3.5 on eight threads, 0.3.0 gains 1.3 unless
-the stream was encoded with several tiles. rivet-av1 threads the tiles and
-the post-filters of one frame; rav1d threaded frames. Closing that is the
-work under way in rivet-av1; this crate takes it with
-`cargo update -p rivet-av1`. The method and the profiles are in
-[docs/rivet-av1.md](docs/rivet-av1.md).
+On a stream with one tile per frame rivet-av1 is 1.27 to 1.35 times rav1d's
+rate on four and eight threads. On the eight-tile clip it is at 0.39 of it
+on eight threads: frames of several tiles do not go through the engine that
+decodes several frames at once, and that is what is left to do in
+rivet-av1. As 0.3.0 was first built (2026-11-12) these rows read 60 / 69 /
+74 / 78, 32 / 36 / 32 / 42 and 63 / 112 / 174 / 210.
 
-Not measured with rivet-av1: the browsers, and the Big Buck Bunny and Sintel
-clips of [docs/performance.md](docs/performance.md), which holds the 0.2.x
+In the browsers (Playwright's builds on the same laptop,
+`scripts/bench-browser.mjs`, 300 frames decoded in a Worker, the same frame
+hash in every configuration), frames per second on 1 / 4 / 8 threads:
+
+| clip | Chromium | WebKit | Firefox |
+|---|---|---|---|
+| mandelbrot + noise 1280×720 | 168 / 404 / 595 | 145 / 363 / 451 | 14 / 44 / 62 |
+| mandelbrot + noise 1920×1080 | 89 / 230 / 292 | 70 / 181 / 222 | 7 / 22 / 32 |
+
+Firefox's engine runs this decoder at about a twelfth of V8's rate on one
+thread. It did the same with rav1d: 0.2.x measured 14 and 7 frames per
+second on one thread at 720p and 1080p there, on another clip and machine
+([docs/performance.md](docs/performance.md)).
+
+Not measured with rivet-av1: the Big Buck Bunny and Sintel clips of
+[docs/performance.md](docs/performance.md), which holds the 0.2.x
 measurements (rav1d: 1080p at 62 fps on one thread and 333 on eight in Chromium,
 on an x86-64 laptop). The YUV→RGBA conversion is this crate's own
 and unchanged: 2.6 to 2.9 times faster in the SIMD build, byte-identical.

@@ -291,6 +291,16 @@ export class Decoder {
     return this.raw.framesBuffered();
   }
 
+  /**
+   * Temporal units the decoder has taken whose frames have not come out yet.
+   * With threads it decodes several frames at once, off the calling thread,
+   * so `run()` can return `Run.STARVED` with frames still coming: while this
+   * is not 0, call `run()` again a little later. Always 0 with one thread.
+   */
+  get unitsInFlight() {
+    return this.raw.unitsInFlight?.() ?? 0;
+  }
+
   get finished() {
     return this.raw.finished();
   }

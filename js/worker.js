@@ -34,6 +34,15 @@ const wake = new MessageChannel();
 wake.port1.onmessage = () => pump();
 const schedule = () => wake.port2.postMessage(0);
 
+let repollTimer = 0;
+function repoll() {
+  if (repollTimer) return;
+  repollTimer = setTimeout(() => {
+    repollTimer = 0;
+    pump();
+  }, 4);
+}
+
 function post(msg, transfer) {
   self.postMessage(msg, transfer || []);
 }
@@ -67,6 +76,11 @@ function pump() {
         post({ type: 'finished', stats: dec.stats() });
       } else if (progressed && inflight < prefetch) {
         schedule();
+      } else if (inflight < prefetch && dec.unitsInFlight > 0) {
+        // No input left to give, but the threads are still decoding frames
+        // of units already given: nothing else would wake this Worker when
+        // they are done, so look again shortly.
+        repoll();
       }
     }
   } finally {

@@ -232,6 +232,53 @@ try { ${src}; window.__done = true; } catch (e) { window.__err = String(e && e.m
     }
     await page.close();
   }
+  // A live stream on the threads build: temporal units pushed one by one and
+  // never an end of stream. With several frames in flight the last units'
+  // frames are still being decoded when the decode Worker runs out of input,
+  // and it has to come back for them by itself — nothing else wakes it.
+  if (!argOnly || 'live push'.includes(argOnly)) {
+    const page = await browser.newPage();
+    const consoleErrors = [];
+    page.on('pageerror', (e) => consoleErrors.push(String(e)));
+    page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+    await page.goto(`${base}/demo/`);
+    const label = `${name} simd-threads live push t4, no end of stream`;
+    try {
+      const r = await page.evaluate(async () => {
+        const { WorkerDecoder } = await import(`${location.origin}/js/index.js`);
+        const dec = new WorkerDecoder({ variant: 'simd-threads', threads: 4 });
+        const errors = [];
+        dec.onerror = (e) => errors.push(String(e.message || e));
+        const ready = await dec.ready;
+        const ivf = new Uint8Array(await (await fetch('/testdata/testsrc-320x180-8bit.ivf')).arrayBuffer());
+        const view = new DataView(ivf.buffer);
+        let units = 0;
+        for (let o = view.getUint16(6, true); o + 12 <= ivf.length;) {
+          const size = view.getUint32(o, true);
+          dec.pushTemporalUnit(ivf.slice(o + 12, o + 12 + size), Number(view.getBigUint64(o + 4, true)));
+          o += 12 + size;
+          units++;
+        }
+        const pts = [];
+        const deadline = performance.now() + 10000;
+        while (pts.length < units && performance.now() < deadline) {
+          const f = dec.nextFrame();
+          if (f) pts.push(f.pts);
+          else await new Promise((res) => setTimeout(res, 5));
+        }
+        const out = { units, frames: pts.length, inOrder: pts.every((p, i) => i === 0 || p > pts[i - 1]), threads: ready.threads, finished: dec.finished, errors };
+        dec.close();
+        return out;
+      });
+      const ok = r.units === 48 && r.frames === r.units && r.inOrder && r.threads === 4 && !r.finished && r.errors.length === 0 && consoleErrors.length === 0;
+      if (!ok) failures++;
+      console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(42)} threads ${r.threads} units ${r.units} frames ${r.frames}${r.inOrder ? '' : ' out of order'}${r.errors.length ? ' errors: ' + r.errors.join('; ') : ''}${consoleErrors.length ? ' console: ' + consoleErrors.join('; ') : ''}`);
+    } catch (e) {
+      failures++;
+      console.log(`FAIL ${label}: ${e.message.split('\n')[0]} ${consoleErrors.join('; ')}`);
+    }
+    await page.close();
+  }
   await browser.close();
 }
 server.close();

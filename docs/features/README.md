@@ -1,6 +1,6 @@
 # wasm-av1: feature docs
 
-> **Last verified against code:** 2026-11-12 @ `162385f`
+> **Last verified against code:** 2026-11-13 @ the commit after `4aa6d72` (frames in flight); the index rows for speed and threading only, the rest as of 2026-11-12 @ `162385f`
 
 wasm-av1 is AV1 decoding for browsers that have no AV1 decoder of their own:
 rivet-av1 (rivet's own AV1 decoder, written from the specification) compiled
@@ -14,11 +14,15 @@ and to a GitHub Release; lewd-frontend consumes the 0.2.2 release tarball by
 URL. Pushing `main` only runs CI.
 
 Since 0.3.0 (2026-11-12) rivet-av1 is the only decoder; rav1d, which 0.1.0
-to 0.2.2 were built on, is gone. **That made the package slower:** in wasm
-rivet-av1 decodes 8-bit video at a third to two thirds of rav1d's
-single-thread rate and scales poorly with threads on the one-tile streams
-most encoders make. It is bit-exact on every fixture in every variant. The
-performance work is under way in rivet-av1;
+to 0.2.2 were built on, is gone. As first built that made the package
+slower (a third to two thirds of rav1d's single-thread rate in wasm, and
+poor scaling with threads). **As measured on 2026-11-13, after the work in
+rivet-av1, it is level with or ahead of rav1d** on 8-bit 720p and 1080p
+video on one thread, and 1.3 times its rate on four and eight threads on
+the one-tile streams most encoders make; with more than one thread its
+frames come out a few temporal units late. A stream encoded with several
+tiles per frame still scales worse than it did with rav1d. It is bit-exact
+on every fixture in every variant.
 [`../rivet-av1.md`](../rivet-av1.md) is the account, with the measurements
 and rav1d as their baseline. lewd-frontend's 0.2.2 tarball is still the
 rav1d build.
@@ -69,17 +73,17 @@ flowchart TB
 
 | Component | Status | Doc |
 |---|---|---|
-| Decoder core (ring, `run`, `finished`, flush) | PARTIAL (slow next to rav1d; a truncated IVF frame loops) | [decoder-core.md](./decoder-core.md) |
+| Decoder core (ring, `run`, `finished`, flush) | PARTIAL (a truncated IVF frame loops) | [decoder-core.md](./decoder-core.md) |
 | Input sources (IVF, containers via rivet, push, CMAF segments, rendition switch) | STABLE | [input-sources.md](./input-sources.md) |
 | Frames, colour conversion and rendering | STABLE | [frames-and-rendering.md](./frames-and-rendering.md) |
-| wasm variants, detection and threading | PARTIAL (threads buy little on one-tile streams) | [variants-and-threading.md](./variants-and-threading.md) |
+| wasm variants, detection and threading | PARTIAL (a stream with several tiles per frame gains little from more than four threads) | [variants-and-threading.md](./variants-and-threading.md) |
 | JS decoder API and the decode Worker | PARTIAL (stale frames after flush; `load` can hang) | [js-api-and-worker.md](./js-api-and-worker.md) |
 | Av1Player and HlsAv1Video | STABLE | [player-and-hls.md](./player-and-hls.md) |
-| Build, tests and release | PARTIAL (committed `pkg/` is still the rav1d build of 0.2.2) | [build-and-release.md](./build-and-release.md) |
+| Build, tests and release | PARTIAL (the committed `pkg/` is replaced from CI's build by hand, so it can trail `main` by a commit) | [build-and-release.md](./build-and-release.md) |
 
 Deeper material that stays authoritative for its subject:
 [`../rivet-av1.md`](../rivet-av1.md) (the decoder: what it is, what it
-replaced, what was measured, what would close the gap),
+replaced, what was measured, what closed the gap and what is left),
 [`../rivet.md`](../rivet.md) (the demuxer), [`../performance.md`](../performance.md)
 (where 0.3.0 stands, and the rav1d measurements of 0.2.x as the baseline),
 [`../integration.md`](../integration.md) (how a player should
@@ -89,8 +93,8 @@ adopt the fallback).
 
 | Component | Defect | Severity |
 |---|---|---|
-| Decoder core | **Speed.** Since 0.3.0 the decoder is rivet-av1, which in wasm decodes 8-bit video at 0.33 to 0.63 times the single-thread rate of the rav1d build it replaced (measured 2026-11-12; 0.83 to 0.97 for 10-bit in the SIMD variant). A rung a device played with 0.2.x may stutter with 0.3.0. The work is in rivet-av1: [`../rivet-av1.md`](../rivet-av1.md). | High |
-| Variants & threading | **Thread scaling.** rivet-av1 threads tiles and post-filter bands inside one frame, not frames: 1.2 to 1.3 times on 8 threads for a stream with one tile per frame, 3.3 with eight tiles; rav1d reached 2.8 to 3.6 and 6.3. On eight threads a one-tile 720p or 1080p stream decodes at a sixth to a fifth of rav1d's rate. | High |
+| Variants & threading | **Thread scaling on streams with several tiles per frame.** Such frames are decoded one at a time, tiles in parallel and post-filters in bands, and are not part of rivet-av1's frame threading: an eight-tile 720p clip gains 2.1 times from eight threads and nothing from the last four, where rav1d reached 6.3 (0.39 of its rate on eight; measured 2026-11-13). One-tile streams, which are most video, gain 3.7 to 4.2 times and are ahead of rav1d. | Medium |
+| Decoder core | **Output lags input with threads.** With more than one thread a unit's frames come out a few units later, and a damaged unit is reported late. A caller that drives `Decoder` itself and stops calling `run()` when it returns `STARVED` loses the frames still in flight until it feeds more or ends the stream; `unitsInFlight` is there to poll on, and the decode Worker does. | Low |
 | Decoder core | A truncated IVF frame makes `IvfReader::next_frame` fail without advancing (`src/ivf.rs:191-196`), so every later `run()` returns the same error and `finished` never becomes true. `Av1Player` and `worker.js` both treat a throw as `CONSUMED` and keep calling: a hot loop of `onerror` / `error` messages on a partly downloaded file. | Medium |
 | JS API & Worker | `WorkerDecoder.flush()` / `setSource()` clear the page-side queue, but frames the Worker posted before it saw the message still arrive and are queued: a few frames of the old position or file are shown after a seek or reload. Messages carry no generation. | Medium |
 | JS API & Worker | `Av1Player.load()` in Worker mode polls `src.info` (`js/player.js:129-133`); if the Worker rejects the source (not AV1, bad file) `info` never arrives and `load()` never settles. | Medium |

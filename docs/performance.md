@@ -2,42 +2,78 @@
 
 ## Where 0.3.0 stands
 
-**0.3.0 is slower than every number in the rest of this file.** Those are
-0.2.x, which decoded with rav1d. Since 0.3.0 the decoder is rivet-av1, and
-as measured on 2026-11-12 (one Apple silicon machine, Node 26 / V8, both
-cores built the same way) it decodes 8-bit video in wasm at a third to two
-thirds of rav1d's rate on one thread:
+**0.3.0 is level with or ahead of 0.2.x on 8-bit 720p and 1080p video with
+one tile per frame (0.87 of it on a synthetic test pattern, on one
+thread), and behind it with threads on video encoded with several tiles.**
+0.2.x decoded with rav1d; since 0.3.0 the decoder is rivet-av1. Measured on
+2026-11-13 on one Apple silicon machine (Node 26 / V8, both cores built
+the same way, `.wasm` without `wasm-opt`, the two taking turns in the same
+run), frames per second.
+
+One thread, SIMD variant, decode only (rivet-av1's own harness):
 
 | stream, SIMD variant, one thread | rav1d (0.2.x) | rivet-av1 (0.3.0) | |
 |---|---|---|---|
-| SVT-AV1 testsrc2, 1280×720 | 296 fps | 107 fps | 0.36× |
-| SVT-AV1 mandelbrot + noise, 1280×720 | 145 | 60.8 | 0.42× |
-| SVT-AV1 mandelbrot + noise, 1920×1080 | 73.8 | 31.5 | 0.43× |
-| SVT-AV1 mandelbrot + noise, 1280×720 10-bit | 80.4 | 77.8 | 0.97× |
-| AOM `av1-1-b8-00-quantizer-20`, 352×288 | 281 | 176 | 0.63× |
+| SVT-AV1 mandelbrot + noise, 1280×720 | 154.1 | 178.9 | 1.16× |
+| SVT-AV1 mandelbrot + noise, 1280×720, eight tiles | 153.9 | 186.0 | 1.21× |
+| SVT-AV1 mandelbrot + noise, 1920×1080 | 80.1 | 89.7 | 1.12× |
+| SVT-AV1 mandelbrot + noise, 1280×720 10-bit | 86.4 | 217.1 | 2.51× |
+| SVT-AV1 testsrc2, 1280×720 | 323.6 | 283.0 | 0.87× |
 
-and it scales poorly with threads, because it threads the tiles and the
-post-filters of one frame where rav1d threaded frames:
+The baseline variant is at 1.00 to 1.07 times rav1d on the mandelbrot
+clips and 0.94 on testsrc2.
+
+Threads, the SIMD + threads variant in Node through this package's build,
+by the wall clock of the whole decode (three rounds of three timed
+decodes, every MD5 the reference):
 
 | SIMD + threads variant in Node | core | 1 thread | 2 | 4 | 8 |
 |---|---|---|---|---|---|
-| mandelbrot + noise 1280×720, one tile | rav1d | 141 fps | 256 | 375 | 497 (3.5×) |
-| | rivet-av1 | 60.1 | 68.7 | 73.7 | 77.9 (1.3×) |
-| mandelbrot + noise 1920×1080, one tile | rav1d | 73.9 | 132 | 197 | 265 (3.6×) |
-| | rivet-av1 | 31.5 | 36.2 | 31.7 | 42.3 (1.3×) |
-| mandelbrot + noise 1280×720, eight tiles | rav1d | 151 | 290 | 530 | 954 (6.3×) |
-| | rivet-av1 | 62.8 | 112 | 174 | 210 (3.3×) |
+| mandelbrot + noise 1280×720, one tile | rav1d | 146 | 269 | 376 | 496 (3.4×) |
+| | rivet-av1 | 175 | 308 | 477 | 652 (3.7×) |
+| mandelbrot + noise 1920×1080, one tile | rav1d | 76 | 137 | 198 | 267 (3.5×) |
+| | rivet-av1 | 85 | 158 | 258 | 360 (4.2×) |
+| mandelbrot + noise 1280×720, eight tiles | rav1d | 152 | 290 | 523 | 956 (6.3×) |
+| | rivet-av1 | 178 | 286 | 380 | 372 (2.1×) |
 
-So on that machine one thread still decodes these 720p clips above 60 frames
-a second and 1080p at about 30; a phone is 3 to 8 times slower, and threads
-will not make up for it on a stream with one tile. A player should start
-lower on the ladder than it did with 0.2.x and step up on measurement
-([integration.md](integration.md)). The full tables (fourteen streams,
-native and both wasm variants, sizes), the method and the profile are in
-[rivet-av1.md](rivet-av1.md). The performance work is under way in
-rivet-av1; the rav1d numbers, there and below, are the baseline it is
-measured against. The clips of this file (Big Buck Bunny, Sintel) and the
-browsers have not been measured with rivet-av1.
+With more than one thread rivet-av1 reconstructs and filters a one-tile
+frame's superblock rows behind its parsing and decodes several frames at
+once, so its frames come out a few temporal units after they went in
+([features/variants-and-threading.md](features/variants-and-threading.md)).
+A frame of several tiles is not part of that: its tiles are decoded in
+parallel and its post-filters in bands, one frame at a time, which is why
+the eight-tile clip stops gaining at four threads and ends at 0.39 of
+rav1d's rate on eight.
+
+In the browsers (Playwright's Chromium, Firefox and WebKit on the same
+machine, `scripts/bench-browser.mjs`, 300 frames, decode in a Worker, the
+same frame hash in every configuration):
+
+| clip | engine | simd, 1 thread | simd-threads, 4 | 8 |
+|---|---|---|---|---|
+| mandelbrot + noise 1280×720 | Chromium | 168 fps | 404 | 595 |
+| mandelbrot + noise 1920×1080 | Chromium | 89 | 230 | 292 |
+| mandelbrot + noise 1280×720 | WebKit | 145 | 363 | 451 |
+| mandelbrot + noise 1920×1080 | WebKit | 70 | 181 | 222 |
+| mandelbrot + noise 1280×720 | Firefox | 14 | 44 | 62 |
+| mandelbrot + noise 1920×1080 | Firefox | 7 | 22 | 32 |
+
+Firefox's one-thread rate is what 0.2.x measured there with rav1d too (14
+frames per second at 720p and 7 at 1080p in the table further down, on
+another clip and machine): the engine, not the decoder. On eight threads
+at 720p it is at 62 where rav1d reached 35.
+
+So on that machine one thread decodes these 720p clips at 145 frames a
+second or more in Chromium and WebKit and 1080p at 70 or more; a phone is
+3 to 8 times slower, and threads now help on a one-tile stream as they
+did with 0.2.x. A player can start where it did with 0.2.x and step up on
+measurement ([integration.md](integration.md)). The full tables, the
+method, the 2026-11-12 measurements this started from (a third to two
+thirds of rav1d's rate on one thread, 1.2 to 1.3 times from eight threads)
+and what is left are in [rivet-av1.md](rivet-av1.md). The rav1d numbers,
+there and below, are the baseline it was measured against. The clips of
+the rest of this file (Big Buck Bunny, Sintel) have not been measured with
+rivet-av1, and neither has a phone.
 
 What does not depend on the core is unchanged: the YUV → RGBA conversion
 below, and the requirements and the Worker arrangement of the threads
@@ -84,10 +120,14 @@ qualifies; `loadWasmAv1({ threads: true })` then picks `simd-threads` /
 `threads`, else falls back to `simd` / `baseline` — one code path either way.
 
 How it was made, in the order the problems came up. Points 1 and 6 hold for
-0.3.0 as they stand. Points 2 to 5 are rav1d's: rivet-av1 has no
-long-lived threads, no frame delay and no `parking_lot`, and its side of
+0.3.0 as they stand. Points 2 to 5 are rav1d's: rivet-av1 starts no
+threads of its own on wasm and needs no `parking_lot`, and its side of
 this is a pool of Workers behind `av1::parallel`
 ([features/variants-and-threading.md](features/variants-and-threading.md)).
+What point 4 describes is true of 0.3.0 again, by other means: with more
+than one thread rivet-av1 has several frames in flight, output is a few
+temporal units late, and at the end of the input `Decoder::run` waits for
+them (`Core::finish` in `src/core.rs`) before `finished` settles.
 
 1. rustc no longer adds the shared-memory linker flags for `+atomics` on
    `wasm32-unknown-unknown` (only the wasip1-threads target spec has them):

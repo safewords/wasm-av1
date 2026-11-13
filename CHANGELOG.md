@@ -41,12 +41,12 @@ becomes that release when it is tagged.
 - **rav1d.** The decoder is rivet-av1, rivet's own AV1 decoder, and nothing
   else: the rav1d dependency (and its `safewords/rav1d` fork), its adapter,
   and `parking_lot_core`, which only rav1d needed, are gone. Output is
-  bit-exact as before, on every fixture in all four variants. **It is
-  slower**: as measured on 2026-11-12, in wasm rivet-av1 decodes 8-bit video
-  at a third to two thirds of rav1d's single-thread rate, and gains 1.2 to
-  1.3 times from eight threads on a stream with one tile per frame where
-  rav1d gained about 3.5. The performance work is under way in rivet-av1.
-  See `docs/rivet-av1.md`.
+  bit-exact as before, on every fixture in all four variants. Speed, as
+  measured on 2026-11-13 in wasm: on one thread 1.0 to 1.2 times rav1d's
+  rate on 8-bit 720p and 1080p video (0.87 on a synthetic test pattern); on
+  four and eight threads 1.3 times on streams with one tile per frame, and
+  0.39 of it on eight threads on a stream encoded with eight tiles. See
+  `README.md` and `docs/rivet-av1.md`.
 - **Breaking, Cargo features:** `bitdepth_8` and `bitdepth_16`. They selected
   rav1d's sample depths; every build now decodes 8, 10 and 12 bits, and
   naming either feature is an error. The default features are `container`
@@ -71,7 +71,17 @@ becomes that release when it is tagged.
   processes. One thread in wasm is 2.2 to 2.9 times faster than 0.3.0 first
   built, and level with or ahead of rav1d on 8-bit 720p and 1080p video in
   both builds (0.87 of it on a synthetic test pattern). Output is unchanged,
-  bit for bit. Thread scaling on one-tile streams is not improved yet.
+  bit for bit.
+- rivet-av1 moves on to `03054ad` (rivet `639239c`): frame threading,
+  derived from the specification's dependencies. A frame of one tile is
+  parsed on one thread while the others reconstruct and filter its rows,
+  and several frames are decoded at once. In the SIMD + threads build in
+  Node, 1280×720 with one tile per frame decodes at 175 / 308 / 477 / 652
+  frames per second on 1 / 2 / 4 / 8 threads (rav1d: 146 / 269 / 376 / 496)
+  and 1920×1080 at 85 / 158 / 258 / 360 (rav1d: 76 / 137 / 198 / 267); as
+  0.3.0 was first built, eight threads gave 78 and 42. A stream of eight
+  tiles per frame scales as before (372 on eight threads; rav1d 956).
+  Output is unchanged, bit for bit.
 - **Breaking, Rust API:** `Error::Open` and `Error::Decode` carry
   `wasm_av1::CoreError`, which is rivet-av1's `av1::Error` (`Bitstream`,
   `Unsupported` or `InvalidInput`, each with a message) where they carried
@@ -86,11 +96,13 @@ becomes that release when it is tagged.
   a credit for commercial use that reaches third parties), including a
   build without the `container` feature, which used to contain only
   BSD-licensed rav1d. `NOTICE` states it.
-- Threads decode the tiles of a frame in parallel and its post-filters in
-  bands, one frame at a time; rav1d also decoded several frames at once.
-  Frames come out with no delay, so `finished()` is true as soon as the last
-  frame has been popped, without the further `run()` the end-of-input drain
-  needed.
+- **With more than one thread, frames come out a few temporal units after
+  their data went in**, as they did with rav1d: up to eight frames (and at
+  most eight 1920×1088 frames' worth of samples, so two at 4K) are decoded
+  at once. At the end of the input `run()` decodes what is still in flight,
+  and `finished()` is true once those frames have been popped. A unit that
+  fails is reported when its turn comes, in `stats.decode_errors`. With one
+  thread nothing is delayed.
 - In the threads variants the Workers are a pool that belongs to the wasm
   instance: `threads - 1` of them are started when the first decoder with
   that many threads opens, and they outlive every decoder. rav1d started a
@@ -116,6 +128,12 @@ becomes that release when it is tagged.
 
 ### Added
 
+- `Decoder::units_in_flight()` (`unitsInFlight` in JavaScript): temporal
+  units the decoder has taken whose frames have not come out yet. While it
+  is not 0, a `run()` that returned `Starved` will have frames later
+  without new input. The decode Worker uses it to come back for those
+  frames by itself, so a live stream that never signals its end still gets
+  every frame; `test/browser.mjs` has that case in all three engines.
 - The threads variants are tested on real threads in Node: both, on 1, 2, 4
   and 8 threads, every fixture's MD5 (`test/threads-node.mjs`, run by
   `node --test test/decode.test.mjs`), and `applyGrain: false` in the

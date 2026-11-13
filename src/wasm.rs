@@ -298,6 +298,14 @@ impl Av1Decoder {
         self.inner.frames_buffered() as u32
     }
 
+    /// Temporal units taken by the decoder whose frames have not come out
+    /// yet (several frames are decoded at once on the threads builds):
+    /// while this is not 0, `run()` again later collects them.
+    #[wasm_bindgen(js_name = "unitsInFlight")]
+    pub fn units_in_flight(&self) -> u32 {
+        self.inner.units_in_flight() as u32
+    }
+
     /// Nothing left to decode or show.
     pub fn finished(&self) -> bool {
         self.inner.finished()

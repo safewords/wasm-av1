@@ -154,5 +154,4 @@ Thread count: `Av1Player` resolves `threads: 'auto'` to
 
 | Idea | Motivation | Sketch | Status |
 |---|---|---|---|
-| Track and terminate thread Workers | No leak on `destroy()` | `WorkerDecoder` keeps the Workers it spawned and terminates them in `close()`; wait for a `closed` reply before terminating the decode Worker | Proposed |
 | Report a dead thread | A hang becomes an error | `thread-worker.js` posts to the page; `WorkerDecoder` raises `onerror` | Proposed |

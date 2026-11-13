@@ -10,8 +10,7 @@ A release is a `v*` tag matching the version in `package.json` and
 
 ## [Unreleased]
 
-The version in `Cargo.toml` and `package.json` is 0.3.0: this section
-becomes that release when it is tagged.
+## [0.3.0] - 2026-11-13
 
 ### Fixed
 
@@ -110,9 +109,9 @@ becomes that release when it is tagged.
 - A damaged frame is not concealed: the temporal unit is dropped and
   decoding resumes at the next keyframe, where rav1d carried on with what it
   had. The decoder stays usable either way.
-- The decoder is smaller: CI's baseline variant is 2.86 MB against 3.30 MB
-  for the last rav1d commit built the same day (681 KB without the
-  demuxers, locally and without `wasm-opt`). The package is nonetheless
+- The baseline variant is smaller and the SIMD one the same size: CI's
+  builds are 3.00 MB and 3.69 MB against 3.30 MB and 3.70 MB for the last
+  rav1d commit. The package is nonetheless
   larger than 0.2.2's 1.70 MB, which was built before the rivet-container
   update of 2026-11-06.
 - `pkg/manifest.json` has `core` (`rivet-av1`) and `rivet` (the rivet
@@ -215,7 +214,8 @@ becomes that release when it is tagged.
 - A release pipeline: a `v*` tag publishes an npm tarball and a `pkg/` zip on
   the GitHub Release.
 
-[unreleased]: https://github.com/safewords/wasm-av1/compare/v0.2.2...HEAD
+[unreleased]: https://github.com/safewords/wasm-av1/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/safewords/wasm-av1/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/safewords/wasm-av1/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/safewords/wasm-av1/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/safewords/wasm-av1/compare/v0.1.3...v0.2.0

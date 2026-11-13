@@ -448,6 +448,16 @@ export class Av1Decoder {
         return ret >>> 0;
     }
     /**
+     * Temporal units taken by the decoder whose frames have not come out
+     * yet (several frames are decoded at once on the threads builds):
+     * while this is not 0, `run()` again later collects them.
+     * @returns {number}
+     */
+    unitsInFlight() {
+        const ret = wasm.av1decoder_unitsInFlight(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * Stream width: the IVF header's, else the last decoded frame's; 0 if unknown yet.
      * @returns {number}
      */

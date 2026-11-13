@@ -175,6 +175,12 @@ export class Av1Decoder {
      */
     truncateQueuedFrom(pts: number): number;
     /**
+     * Temporal units taken by the decoder whose frames have not come out
+     * yet (several frames are decoded at once on the threads builds):
+     * while this is not 0, `run()` again later collects them.
+     */
+    unitsInFlight(): number;
+    /**
      * Stream width: the IVF header's, else the last decoded frame's; 0 if unknown yet.
      */
     width(): number;
@@ -294,6 +300,7 @@ export interface InitOutput {
     readonly av1decoder_timeBaseDen: (a: number) => number;
     readonly av1decoder_timeBaseNum: (a: number) => number;
     readonly av1decoder_truncateQueuedFrom: (a: number, b: number) => number;
+    readonly av1decoder_unitsInFlight: (a: number) => number;
     readonly av1decoder_width: (a: number) => number;
     readonly containerSupport: () => number;
     readonly simdEnabled: () => number;

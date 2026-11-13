@@ -66,18 +66,15 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
 
 ### Edge cases & gotchas
 
-- **The committed `pkg/` trails `main`, by a decoder.** It was last rebuilt
-  in `527e95a` (0.2.2) and is a rav1d build: its `manifest.json` says
-  `"version": "0.2.2"` and has a `rav1d` entry where `build.sh` now writes
-  `core` and `rivet`. `main` is 0.3.0 on rivet-av1. It is replaced only from
-  CI's build (the pinned `wasm-opt`), never from a local one. Until then:
-  consumers of the release tarball are unaffected (release.yml builds the
-  tag itself); consumers of `github:safewords/wasm-av1#main` get 0.2.2 wasm
-  with newer JS; and `node --test test/decode.test.mjs` run against the
-  committed `pkg/` without building first fails six of its twenty tests,
-  the threads builds on 2, 4 and 8 threads, on "thread Workers asked for"
-  (rav1d started a set of threads per decoder, the pool starts
-  `threads - 1` once). CI builds before it tests and is not affected.
+- **The committed `pkg/` can trail `main` by a commit.** It is replaced only
+  from CI's build (the pinned `wasm-opt`), never from a local one, by hand,
+  after the source commit that changes the wasm. As of `2a97faf` it is CI's
+  build of that commit (0.3.0, rivet-av1 `03054ad`). Between a source commit
+  and the `pkg/` commit that follows it, consumers of the release tarball
+  are unaffected (release.yml builds the tag itself) and consumers of
+  `github:safewords/wasm-av1#main` get the previous wasm with newer JS; the
+  JS tolerates that where it can (`unitsInFlight` reads as 0 on a wasm that
+  lacks it).
 - CI's "does the committed `pkg/` match" step is a warning only: a Windows
   build and a Linux build differ in the paths embedded in panic strings
   (`ci.yml:98-104`).

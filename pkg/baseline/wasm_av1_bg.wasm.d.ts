@@ -59,6 +59,7 @@ export const av1decoder_threads: (a: number) => number;
 export const av1decoder_timeBaseDen: (a: number) => number;
 export const av1decoder_timeBaseNum: (a: number) => number;
 export const av1decoder_truncateQueuedFrom: (a: number, b: number) => number;
+export const av1decoder_unitsInFlight: (a: number) => number;
 export const av1decoder_width: (a: number) => number;
 export const containerSupport: () => number;
 export const simdEnabled: () => number;

@@ -67,9 +67,11 @@ becomes that release when it is tagged.
 - A damaged frame is not concealed: the temporal unit is dropped and
   decoding resumes at the next keyframe, where rav1d carried on with what it
   had. The decoder stays usable either way.
-- The decoder is smaller: 3.03 MB for the baseline variant with the
-  demuxers and 681 KB without, against 3.50 MB with rav1d, all without
-  `wasm-opt`.
+- The decoder is smaller: CI's baseline variant is 2.86 MB against 3.30 MB
+  for the last rav1d commit built the same day (681 KB without the
+  demuxers, locally and without `wasm-opt`). The package is nonetheless
+  larger than 0.2.2's 1.70 MB, which was built before the rivet-container
+  update of 2026-11-06.
 - `pkg/manifest.json` has `core` (`rivet-av1`) and `rivet` (the rivet
   revision `Cargo.lock` pins) where it had `rav1d`.
 - IVF handed to `setSourceContainer` decodes, now that rivet reads IVF as a

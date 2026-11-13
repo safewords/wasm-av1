@@ -49,7 +49,7 @@ export class Av1Decoder {
         return ret !== 0;
     }
     /**
-     * Drop everything buffered, reset rav1d; IVF sources rewind.
+     * Drop everything buffered, reset the decoder core; IVF sources rewind.
      */
     flush() {
         const ret = wasm.av1decoder_flush(this.__wbg_ptr);
@@ -211,7 +211,7 @@ export class Av1Decoder {
     /**
      * `maxBuffered` frames kept ahead (default 10, upstream's
      * `NUM_FRAMES_BUFFERED`); `applyGrain` toggles film-grain synthesis
-     * (default true); `threads` rav1d worker threads (default 1; more only
+     * (default true); `threads` decoder threads (default 1; more only
      * on a build where `threadsSupported()` is true, else forced to 1 — see
      * `threads()` for what was applied).
      * @param {number | null} [max_buffered]
@@ -297,7 +297,7 @@ export class Av1Decoder {
      * Demux one media segment (`moof`+`mdat`, or a whole file) with rivet
      * and queue its samples as temporal units; returns how many. Frames keep
      * flowing across segments — no reset. Time base = the container's.
-     * @param {Uint8Array} segment
+     * @param {Uint8Array | number[]} segment
      * @returns {number}
      */
     pushSegment(segment) {
@@ -311,13 +311,14 @@ export class Av1Decoder {
     }
     /**
      * Queue one temporal unit (an AV1 sample's OBUs) with its pts.
-     * @param {Uint8Array} data
+     * @param {Uint8Array | number[]} data
      * @param {number} pts
      */
     pushTemporalUnit(data, pts) {
+        const val2 = +pts;
         const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.av1decoder_pushTemporalUnit(this.__wbg_ptr, ptr0, len0, pts);
+        const ret = wasm.av1decoder_pushTemporalUnit(this.__wbg_ptr, ptr0, len0, val2);
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
@@ -338,6 +339,17 @@ export class Av1Decoder {
         return ret >>> 0;
     }
     /**
+     * `run()` until the ring is full or input runs out.
+     * @returns {RunResult}
+     */
+    runUntilFull() {
+        const ret = wasm.av1decoder_runUntilFull(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0];
+    }
+    /**
      * One bounded step of decoding — see `Decoder::run`. A rejected temporal
      * unit throws; the decoder stays usable, keep calling.
      * @returns {RunResult}
@@ -350,21 +362,10 @@ export class Av1Decoder {
         return ret[0];
     }
     /**
-     * `run()` until the ring is full or input runs out.
-     * @returns {RunResult}
-     */
-    runUntilFull() {
-        const ret = wasm.av1decoder_runUntilFull(this.__wbg_ptr);
-        if (ret[2]) {
-            throw takeFromExternrefTable0(ret[1]);
-        }
-        return ret[0];
-    }
-    /**
      * Segment-fed playback: keep the CMAF/fMP4 initialisation segment
      * (`ftyp`+`moov`) so `pushSegment` can demux media segments against it.
      * Switches to push mode. Throws without the `container` feature.
-     * @param {Uint8Array} init
+     * @param {Uint8Array | number[]} init
      */
     setInitSegment(init) {
         const ptr0 = passArray8ToWasm0(init, wasm.__wbindgen_malloc);
@@ -379,7 +380,7 @@ export class Av1Decoder {
      * MPEG-TS — demuxed by rivet (copied into wasm memory). Resets the
      * decoder. Throws if the build lacks the `container` feature, rivet
      * cannot read the file, or the video track is not AV1.
-     * @param {Uint8Array} data
+     * @param {Uint8Array | number[]} data
      */
     setSourceContainer(data) {
         const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
@@ -391,7 +392,7 @@ export class Av1Decoder {
     }
     /**
      * Load a whole IVF file (copied into wasm memory). Resets the decoder.
-     * @param {Uint8Array} data
+     * @param {Uint8Array | number[]} data
      */
     setSourceIvf(data) {
         const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
@@ -564,7 +565,7 @@ export function simdEnabled() {
 
 /**
  * True when this .wasm was built with atomics + shared memory and can run
- * rav1d's worker threads as Web Workers (`threads` > 1 in the constructor).
+ * the decoder's worker threads as Web Workers (`threads` > 1 in the constructor).
  * Needs a cross-origin-isolated page and the decoder in a Worker.
  * @returns {boolean}
  */
@@ -592,21 +593,20 @@ export function version() {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg_Error_408e67f47ca7b58b: function(arg0, arg1) {
+        __wbg_Error_208446807d0d1e30: function(arg0, arg1) {
             const ret = Error(getStringFromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg___wbindgen_throw_bb96b2010945f0bc: function(arg0, arg1) {
+        __wbg___wbindgen_throw_4c88d8bf264fd984: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
-            const offset = table.grow(4);
             table.set(0, undefined);
-            table.set(offset + 0, undefined);
-            table.set(offset + 1, null);
-            table.set(offset + 2, true);
-            table.set(offset + 3, false);
+            table.set(1024, undefined);
+            table.set(1025, null);
+            table.set(1026, true);
+            table.set(1027, false);
         },
     };
     return {
@@ -623,7 +623,8 @@ const DecoderStatsFinalization = (typeof FinalizationRegistry === 'undefined')
     : new FinalizationRegistry(ptr => wasm.__wbg_decoderstats_free(ptr, 1));
 
 function getStringFromWasm0(ptr, len) {
-    return decodeText(ptr >>> 0, len);
+    ptr = ptr >>> 0;
+    return decodeText(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -651,18 +652,18 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 
-let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
 cachedTextDecoder.decode();
 const MAX_SAFARI_DECODE_BYTES = 2146435072;
 let numBytesDecoded = 0;
-function decodeText(ptr, len) {
-    numBytesDecoded += len;
+function decodeText(bytes) {
+    numBytesDecoded += bytes.length;
     if (numBytesDecoded >= MAX_SAFARI_DECODE_BYTES) {
-        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
         cachedTextDecoder.decode();
-        numBytesDecoded = len;
+        numBytesDecoded = bytes.length;
     }
-    return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
+    return cachedTextDecoder.decode(bytes);
 }
 
 let WASM_VECTOR_LEN = 0;
@@ -736,9 +737,17 @@ function initSync(module) {
     return __wbg_finalize_init(instance, module);
 }
 
+let __wbg_init_promise;
 async function __wbg_init(module_or_path) {
     if (wasm !== undefined) return wasm;
+    if (__wbg_init_promise === undefined) {
+        __wbg_init_promise = __wbg_init_once(module_or_path);
+        __wbg_init_promise.catch(() => { __wbg_init_promise = undefined; });
+    }
+    return __wbg_init_promise;
+}
 
+async function __wbg_init_once(module_or_path) {
 
     if (module_or_path !== undefined) {
         if (Object.getPrototypeOf(module_or_path) === Object.prototype) {

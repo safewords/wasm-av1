@@ -91,9 +91,11 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
 - **Without `wasm-opt` the `.wasm` is about twice the size.** `build.sh`
   says "~15% smaller"; measured on 2026-11-12 with rav1d, the baseline
   variant was 3 499 115 bytes without binaryen against the 1 700 331 CI
-  shipped. 0.3.0 without binaryen is 3 026 836; CI has not built it yet, so
-  the README's size table is the local, unoptimised build and says so.
-  Compare sizes only between builds made the same way.
+  shipped in 0.2.2. That gap was not `wasm-opt`: 0.2.2 was built in August,
+  before the rivet-container update of 2026-11-06, and CI's build of the last
+  rav1d commit on 2026-11-12 was 3 302 417. 0.3.0 is 3 026 836 without
+  binaryen and 2 862 132 from CI, about 5% off, and the README's size table
+  is CI's build. Compare sizes only between builds made the same way.
 - The threads variants pass `-C target-feature=+atomics`, which is not a
   stable target feature. rustc has always warned; from 1.100.0 the warning
   adds that it "will become a hard error in a future release"

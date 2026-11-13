@@ -1,5 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
+export const __wasm_av1_thread_entry: (a: number) => void;
 export const __wbg_av1decoder_free: (a: number, b: number) => void;
 export const __wbg_decoderstats_free: (a: number, b: number) => void;
 export const __wbg_get_decoderstats_bytesIn: (a: number) => number;
@@ -60,30 +61,9 @@ export const av1decoder_timeBaseNum: (a: number) => number;
 export const av1decoder_truncateQueuedFrom: (a: number, b: number) => number;
 export const av1decoder_width: (a: number) => number;
 export const containerSupport: () => number;
-export const version: () => [number, number];
-export const __wasm_av1_thread_entry: (a: number) => void;
 export const simdEnabled: () => number;
 export const threadsSupported: () => number;
-export const dav1d_apply_grain: (a: number, b: number, c: number) => number;
-export const dav1d_close: (a: number) => void;
-export const dav1d_data_create: (a: number, b: number) => number;
-export const dav1d_data_props_unref: (a: number) => void;
-export const dav1d_data_unref: (a: number) => void;
-export const dav1d_data_wrap: (a: number, b: number, c: number, d: number, e: number) => number;
-export const dav1d_data_wrap_user_data: (a: number, b: number, c: number, d: number) => number;
-export const dav1d_default_settings: (a: number) => void;
-export const dav1d_flush: (a: number) => void;
-export const dav1d_get_decode_error_data_props: (a: number, b: number) => number;
-export const dav1d_get_event_flags: (a: number, b: number) => number;
-export const dav1d_get_frame_delay: (a: number) => number;
-export const dav1d_get_picture: (a: number, b: number) => number;
-export const dav1d_open: (a: number, b: number) => number;
-export const dav1d_parse_sequence_header: (a: number, b: number, c: number) => number;
-export const dav1d_picture_unref: (a: number) => void;
-export const dav1d_send_data: (a: number, b: number) => number;
-export const dav1d_version: () => number;
-export const dav1d_version_api: () => number;
-export const dav1d_set_cpu_flags_mask: (a: number) => void;
+export const version: () => [number, number];
 export const memory: WebAssembly.Memory;
 export const __wbindgen_exn_store: (a: number) => void;
 export const __externref_table_alloc: () => number;

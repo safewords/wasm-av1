@@ -25,7 +25,7 @@ export class Av1Decoder {
      */
     finished(): boolean;
     /**
-     * Drop everything buffered, reset rav1d; IVF sources rewind.
+     * Drop everything buffered, reset the decoder core; IVF sources rewind.
      */
     flush(): void;
     /**
@@ -84,7 +84,7 @@ export class Av1Decoder {
     /**
      * `maxBuffered` frames kept ahead (default 10, upstream's
      * `NUM_FRAMES_BUFFERED`); `applyGrain` toggles film-grain synthesis
-     * (default true); `threads` rav1d worker threads (default 1; more only
+     * (default true); `threads` decoder threads (default 1; more only
      * on a build where `threadsSupported()` is true, else forced to 1 — see
      * `threads()` for what was applied).
      */
@@ -118,42 +118,42 @@ export class Av1Decoder {
      * and queue its samples as temporal units; returns how many. Frames keep
      * flowing across segments — no reset. Time base = the container's.
      */
-    pushSegment(segment: Uint8Array): number;
+    pushSegment(segment: Uint8Array | number[]): number;
     /**
      * Queue one temporal unit (an AV1 sample's OBUs) with its pts.
      */
-    pushTemporalUnit(data: Uint8Array, pts: number): void;
+    pushTemporalUnit(data: Uint8Array | number[], pts: number): void;
     /**
      * Bytes of RGBA the *current frame* needs (`width * height * 4`).
      */
     rgbaLen(): number;
     rgbaPtr(): number;
     /**
+     * `run()` until the ring is full or input runs out.
+     */
+    runUntilFull(): RunResult;
+    /**
      * One bounded step of decoding — see `Decoder::run`. A rejected temporal
      * unit throws; the decoder stays usable, keep calling.
      */
     run(): RunResult;
     /**
-     * `run()` until the ring is full or input runs out.
-     */
-    runUntilFull(): RunResult;
-    /**
      * Segment-fed playback: keep the CMAF/fMP4 initialisation segment
      * (`ftyp`+`moov`) so `pushSegment` can demux media segments against it.
      * Switches to push mode. Throws without the `container` feature.
      */
-    setInitSegment(init: Uint8Array): void;
+    setInitSegment(init: Uint8Array | number[]): void;
     /**
      * Load a whole container file — MP4 / fragmented MP4 / CMAF, WebM / MKV,
      * MPEG-TS — demuxed by rivet (copied into wasm memory). Resets the
      * decoder. Throws if the build lacks the `container` feature, rivet
      * cannot read the file, or the video track is not AV1.
      */
-    setSourceContainer(data: Uint8Array): void;
+    setSourceContainer(data: Uint8Array | number[]): void;
     /**
      * Load a whole IVF file (copied into wasm memory). Resets the decoder.
      */
-    setSourceIvf(data: Uint8Array): void;
+    setSourceIvf(data: Uint8Array | number[]): void;
     stats(): DecoderStats;
     /**
      * Worker threads this decoder runs with (1 unless the build supports
@@ -216,7 +216,7 @@ export function simdEnabled(): boolean;
 
 /**
  * True when this .wasm was built with atomics + shared memory and can run
- * rav1d's worker threads as Web Workers (`threads` > 1 in the constructor).
+ * the decoder's worker threads as Web Workers (`threads` > 1 in the constructor).
  * Needs a cross-origin-isolated page and the decoder in a Worker.
  */
 export function threadsSupported(): boolean;
@@ -290,29 +290,9 @@ export interface InitOutput {
     readonly av1decoder_truncateQueuedFrom: (a: number, b: number) => number;
     readonly av1decoder_width: (a: number) => number;
     readonly containerSupport: () => number;
+    readonly simdEnabled: () => number;
     readonly threadsSupported: () => number;
     readonly version: () => [number, number];
-    readonly simdEnabled: () => number;
-    readonly dav1d_apply_grain: (a: number, b: number, c: number) => number;
-    readonly dav1d_close: (a: number) => void;
-    readonly dav1d_data_create: (a: number, b: number) => number;
-    readonly dav1d_data_props_unref: (a: number) => void;
-    readonly dav1d_data_unref: (a: number) => void;
-    readonly dav1d_data_wrap: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly dav1d_data_wrap_user_data: (a: number, b: number, c: number, d: number) => number;
-    readonly dav1d_default_settings: (a: number) => void;
-    readonly dav1d_flush: (a: number) => void;
-    readonly dav1d_get_decode_error_data_props: (a: number, b: number) => number;
-    readonly dav1d_get_event_flags: (a: number, b: number) => number;
-    readonly dav1d_get_frame_delay: (a: number) => number;
-    readonly dav1d_get_picture: (a: number, b: number) => number;
-    readonly dav1d_open: (a: number, b: number) => number;
-    readonly dav1d_parse_sequence_header: (a: number, b: number, c: number) => number;
-    readonly dav1d_picture_unref: (a: number) => void;
-    readonly dav1d_send_data: (a: number, b: number) => number;
-    readonly dav1d_version: () => number;
-    readonly dav1d_version_api: () => number;
-    readonly dav1d_set_cpu_flags_mask: (a: number) => void;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

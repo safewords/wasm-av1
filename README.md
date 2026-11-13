@@ -42,20 +42,22 @@ defects.
 ## What you get
 
 ```
-pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     3.03 MB (964 KB gzip)   Chrome 96 / Firefox 89 / Safari 15
-pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 3.47 MB (1.10 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
-pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  3.07 MB                 + cross-origin isolation (Safari 15.2)
-pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      3.52 MB                 + cross-origin isolation
+pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     2.86 MB (992 KB gzip)   Chrome 96 / Firefox 89 / Safari 15
+pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 3.40 MB (1.12 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
+pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  2.91 MB (1.00 MB gzip)  + cross-origin isolation (Safari 15.2)
+pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      3.45 MB (1.14 MB gzip)  + cross-origin isolation
 pkg/thread-worker.js               the Worker each decoder thread runs in
 js/                                ESM wrapper: loader + feature detection, Decoder, WebGL/2D renderers, Worker, Av1Player, HlsAv1Video
 ```
 
-Those sizes are a local build of 0.3.0 **without `wasm-opt`** (2026-11-12).
-CI runs `wasm-opt`, which about halved the rav1d builds (0.2.2 shipped
-1.70 MB baseline, 606 KB gzip, from 3.50 MB), and CI has not built 0.3.0
-yet. Most of each file is the demuxers: without the `container` feature the
-baseline build is 681 KB (268 KB gzip) and the SIMD build 871 KB (314 KB
-gzip), again without `wasm-opt`.
+Those sizes are CI's build of 0.3.0 with `wasm-opt -O3` (2026-11-12), which
+is what `pkg/` holds. The same CI built the last rav1d commit that day at
+3.30 MB baseline and 3.70 MB SIMD, so the change of decoder made each variant
+8 to 13% smaller. The 0.2.2 package was smaller still (1.70 MB baseline,
+606 KB gzip) because it was built in August, before the rivet-container
+update of 2026-11-06 that most of each file now is: without the `container`
+feature a local build without `wasm-opt` is 681 KB baseline (268 KB gzip)
+and 871 KB SIMD (314 KB gzip).
 
 The threads builds give the decoder a pool of Web Workers on the same shared
 memory: it decodes the tiles of a frame in parallel and runs the loop

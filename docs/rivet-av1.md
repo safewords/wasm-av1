@@ -256,8 +256,9 @@ rav1d 83, 156, 239, 326; rivet-av1 72, 83, 89, 91).
 ### Size
 
 Bytes of the `.wasm`, without `wasm-opt` (CI's builds, with it, are about
-half: rav1d's baseline was 1 700 331 from CI), all with the `container`
-feature:
+5% smaller: 2 862 132 for the rivet-av1 baseline and 3 302 417 for the last
+rav1d commit, both on 2026-11-12; the 1 700 331 that 0.2.2 shipped predates
+the rivet-container update of 2026-11-06), all with the `container` feature:
 
 | variant | rav1d | rivet-av1 at `3abbfe2` | rivet-av1 +3 |
 |---|---|---|---|

@@ -2,7 +2,7 @@
 name = "wasm-av1"
 version = "0.3.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.99"
 license = "Apache-2.0"
 description = "AV1 decoding for the browser: rivet-av1 compiled to WebAssembly, in baseline, SIMD and threads builds. A Rust port of GoogleChromeLabs/wasm-av1."
 repository = "https://github.com/safewords/wasm-av1"
@@ -38,6 +38,13 @@ md-5 = "0.10"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+# Cargo's own lints (Cargo 1.100). `unused_dependencies` is warn-by-default,
+# and a warning from cargo is not a rustc warning: `cargo clippy -- -D warnings`
+# exits 0 with an unused dependency in the manifest. `deny` makes any cargo
+# command that compiles the crate fail on one.
+[lints.cargo]
+unused_dependencies = "deny"
 
 [features]
 default = ["container"]

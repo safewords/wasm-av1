@@ -199,7 +199,7 @@ fn convert_generic<S: Sample>(frame: &Frame, coef: &Coefficients, out: &mut [u8]
         if gbr {
             // Matrix 0 with 4:4:4 is planar GBR: Y carries G, U carries B, V carries R.
             let scale_shift = extra_bits;
-            for (x, px) in out_row.chunks_exact_mut(4).enumerate() {
+            for (x, px) in out_row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let g = S::get(yrow, x) >> scale_shift;
                 let b = S::get(urow, x) >> scale_shift;
                 let r = S::get(vrow, x) >> scale_shift;
@@ -208,7 +208,7 @@ fn convert_generic<S: Sample>(frame: &Frame, coef: &Coefficients, out: &mut [u8]
             continue;
         }
 
-        for (x, px) in out_row.chunks_exact_mut(4).enumerate() {
+        for (x, px) in out_row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let yv = coef.y * (S::get(yrow, x) - y_off) + round;
             let (u, v) = if has_chroma {
                 let cx = x >> ss_x;
@@ -446,7 +446,7 @@ mod tests {
         for (yuv, rgb) in cases {
             let f = synth(2, 2, 8, PixelLayout::I420, c601(), |p, _, _| yuv[p]);
             let out = rgba_of(&f);
-            for px in out.chunks_exact(4) {
+            for px in out.as_chunks::<4>().0 {
                 for i in 0..3 {
                     assert!(
                         (px[i] as i32 - rgb[i] as i32).abs() <= 2,

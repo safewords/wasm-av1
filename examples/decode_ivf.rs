@@ -114,7 +114,9 @@ fn main() {
                     let mut f = fs::File::create(format!("frame{frames:04}.ppm")).unwrap();
                     write!(f, "P6\n{} {}\n255\n", frame.width, frame.height).unwrap();
                     let rgb: Vec<u8> = rgba
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .flat_map(|p| [p[0], p[1], p[2]])
                         .collect();
                     f.write_all(&rgb).unwrap();

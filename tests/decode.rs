@@ -438,12 +438,12 @@ fn rgba_conversion_of_a_real_frame_is_sane() {
         let mut rgba = vec![0u8; f.rgba_len()];
         convert::yuv_to_rgba(f, &mut rgba);
         assert!(
-            rgba.chunks_exact(4).all(|p| p[3] == 255),
+            rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
             "{}: alpha",
             fx.name
         );
         let (mut lo, mut hi) = (255u8, 0u8);
-        for p in rgba.chunks_exact(4) {
+        for p in rgba.as_chunks::<4>().0 {
             lo = lo.min(p[0]).min(p[1]).min(p[2]);
             hi = hi.max(p[0]).max(p[1]).max(p[2]);
         }
@@ -455,7 +455,9 @@ fn rgba_conversion_of_a_real_frame_is_sane() {
         if f.layout != PixelLayout::I400 {
             // Colour: some pixel must be clearly non-grey.
             let colourful = rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|p| (p[0] as i32 - p[2] as i32).abs() > 60);
             assert!(colourful, "{}: no colour survived conversion", fx.name);
         }

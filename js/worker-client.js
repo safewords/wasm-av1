@@ -27,6 +27,9 @@ export class WorkerDecoder {
     this.onerror = null;
     this.onframe = null;
     this._waiters = [];
+    /** The thread Workers this decoder's decode Worker asked for (page-owned). */
+    this._threadWorkers = [];
+    this._closed = false;
     this._replies = new Map(); // tag → resolve, for request/response messages
     this._tag = 0;
     // Bundlers (Vite, webpack) only recognise a worker entry when the URL is
@@ -71,8 +74,10 @@ export class WorkerDecoder {
       case 'spawnThread':
         // A worker thread for the decode Worker's decoder: it asks us
         // because it is about to block waiting for it (see loader.js). The
-        // compiled module and the shared memory came along.
-        spawnThreadWorker(m);
+        // compiled module and the shared memory came along. Kept, because
+        // a pool thread never returns: close() is what ends it.
+        if (this._closed) break;
+        this._threadWorkers.push(spawnThreadWorker(m));
         break;
       case 'info':
         this.info = m.info;
@@ -228,8 +233,24 @@ export class WorkerDecoder {
     }
   }
 
+  /** How many thread Workers are alive for this decoder (0 once closed). */
+  get threadWorkerCount() {
+    return this._threadWorkers.length;
+  }
+
+  /**
+   * End the decoder: the decode Worker and every thread Worker it asked for.
+   * The thread Workers are created by the page, so terminating the decode
+   * Worker does not end them; a pool thread blocks on the shared memory for
+   * as long as the instance lives, and would keep that memory (the whole
+   * wasm heap) alive with it. terminate() ends a blocked Worker.
+   */
   close() {
+    if (this._closed) return;
+    this._closed = true;
     this.worker.postMessage({ type: 'close' });
     this.worker.terminate();
+    for (const w of this._threadWorkers) w.terminate();
+    this._threadWorkers = [];
   }
 }

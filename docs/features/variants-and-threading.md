@@ -1,6 +1,6 @@
 # wasm variants, detection and threading
 
-> **Status:** PARTIAL — the four variants work, and decode on real threads in the threads builds; threads buy little on a one-tile stream; the thread Workers are never torn down; no browser has run the 0.3.0 build through the Playwright matrix.
+> **Status:** PARTIAL — the four variants work, and decode on real threads in the threads builds; threads buy little on a one-tile stream; no browser has run the 0.3.0 build through the Playwright matrix.
 > **Owners (code):** `js/detect.js`, `js/loader.js`, `src/threads.rs`, `js/thread-worker.js`, `scripts/build.sh`, `Cargo.toml`
 > **Related docs:** [js-api-and-worker.md](./js-api-and-worker.md), [build-and-release.md](./build-and-release.md), [`../rivet-av1.md`](../rivet-av1.md), [`../performance.md`](../performance.md), [`../integration.md`](../integration.md)
 > **Last verified against code:** 2026-11-12 @ `162385f`
@@ -111,15 +111,15 @@ Thread count: `Av1Player` resolves `threads: 'auto'` to
 
 ### Edge cases & gotchas
 
-- **Thread Workers are never torn down.** A pool worker never returns, by
-  design, and nothing else ends it: `spawnThreadWorker` returns the Worker
-  but nothing keeps it, and `WorkerDecoder.close()` terminates only the
-  decode Worker (`js/worker-client.js:231-234`). The thread Workers, created
-  by the page, then sit blocked on the shared memory, which they keep
-  alive. Each threaded player that is destroyed leaves `threads - 1` of
-  them (up to 7) with their 2 MiB stacks and the instance's heap. Read from
-  the code, not reproduced in a browser. (With rav1d the threads ended
-  when a decoder was freed, which `close()` likely never got to either.)
+- **Thread Workers end with the decoder (fixed 2026-11-13).** A pool worker
+  never returns, by design, and the page creates it, so terminating the
+  decode Worker does not end it. Until this fix nothing did: every threaded
+  player that was destroyed left `threads - 1` Workers (up to 7) blocked on
+  the shared memory, and the instance's heap with them. `WorkerDecoder` now
+  keeps the Workers it starts and `close()` terminates them
+  (`js/worker-client.js`, `threadWorkerCount`). Checked in headless Chromium
+  through `test/browser.mjs` (the threads combinations still play); the
+  Workers actually going away was not observed directly.
 - **The fixtures here are one tile and tiny**, so the tests prove that the
   threads builds decode correctly on a pool of real threads, not that they
   are faster. The speed-up was measured separately on 720p clips (above).

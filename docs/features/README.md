@@ -72,7 +72,7 @@ flowchart TB
 | Decoder core (ring, `run`, `finished`, flush) | PARTIAL (slow next to rav1d; a truncated IVF frame loops) | [decoder-core.md](./decoder-core.md) |
 | Input sources (IVF, containers via rivet, push, CMAF segments, rendition switch) | STABLE | [input-sources.md](./input-sources.md) |
 | Frames, colour conversion and rendering | STABLE | [frames-and-rendering.md](./frames-and-rendering.md) |
-| wasm variants, detection and threading | PARTIAL (threads buy little on one-tile streams; thread Workers are never torn down) | [variants-and-threading.md](./variants-and-threading.md) |
+| wasm variants, detection and threading | PARTIAL (threads buy little on one-tile streams) | [variants-and-threading.md](./variants-and-threading.md) |
 | JS decoder API and the decode Worker | PARTIAL (stale frames after flush; `load` can hang) | [js-api-and-worker.md](./js-api-and-worker.md) |
 | Av1Player and HlsAv1Video | STABLE | [player-and-hls.md](./player-and-hls.md) |
 | Build, tests and release | PARTIAL (committed `pkg/` is still the rav1d build of 0.2.2) | [build-and-release.md](./build-and-release.md) |

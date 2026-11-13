@@ -13,6 +13,13 @@ A release is a `v*` tag matching the version in `package.json` and
 The version in `Cargo.toml` and `package.json` is 0.3.0: this section
 becomes that release when it is tagged.
 
+### Fixed
+
+- A threaded player no longer leaks its thread Workers. The page creates
+  them, a pool thread never returns, and `WorkerDecoder.close()` ended only
+  the decode Worker, so each destroyed player left up to seven Workers and
+  the wasm heap alive. `close()` now terminates them.
+
 ### Removed
 
 - **rav1d.** The decoder is rivet-av1, rivet's own AV1 decoder, and nothing

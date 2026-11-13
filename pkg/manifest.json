@@ -6,9 +6,9 @@
   "features": "default",
   "threadWorker": "thread-worker.js",
   "variants": {
-    "baseline": { "wasm": "baseline/wasm_av1_bg.wasm", "js": "baseline/wasm_av1.js", "bytes": 2865619 },
-    "simd": { "wasm": "simd/wasm_av1_bg.wasm", "js": "simd/wasm_av1.js", "bytes": 3425822 },
-    "threads": { "wasm": "threads/wasm_av1_bg.wasm", "js": "threads/wasm_av1.js", "bytes": 2915843 },
-    "simd-threads": { "wasm": "simd-threads/wasm_av1_bg.wasm", "js": "simd-threads/wasm_av1.js", "bytes": 3480307 }
+    "baseline": { "wasm": "baseline/wasm_av1_bg.wasm", "js": "baseline/wasm_av1.js", "bytes": 2865625 },
+    "simd": { "wasm": "simd/wasm_av1_bg.wasm", "js": "simd/wasm_av1.js", "bytes": 3425828 },
+    "threads": { "wasm": "threads/wasm_av1_bg.wasm", "js": "threads/wasm_av1.js", "bytes": 2914708 },
+    "simd-threads": { "wasm": "simd-threads/wasm_av1_bg.wasm", "js": "simd-threads/wasm_av1.js", "bytes": 3479001 }
   }
 }

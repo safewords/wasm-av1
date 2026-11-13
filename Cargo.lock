@@ -496,6 +496,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rivet-av1"
+version = "0.1.0"
+source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#2100c310a109bf7185768cd56f7397f4ebb8bb33"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "rivet-container"
 version = "0.2.0"
 source = "git+https://github.com/rivet-transcoder/rivet?branch=develop#2100c310a109bf7185768cd56f7397f4ebb8bb33"
@@ -815,6 +823,7 @@ dependencies = [
  "md-5",
  "parking_lot_core",
  "rav1d",
+ "rivet-av1",
  "rivet-container",
  "wasm-bindgen",
  "wasm-bindgen-test",

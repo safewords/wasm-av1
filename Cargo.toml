@@ -12,13 +12,25 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# The decoder. rav1d is memorysafety.org's Rust port of dav1d (BSD-2-Clause).
-# We take it from our fork's `main`, which is upstream `main` plus four
+# The decoder core. Two are wired in; one is compiled (src/core_*.rs).
+#
+# rav1d, the default: memorysafety.org's Rust port of dav1d (BSD-2-Clause).
+# We take it from our fork's `main`, which is upstream `main` plus five
 # commits: build without a libc, no panic on a broken temporal unit, the
-# wasm32 SIMD128 kernels for MC/warp/CDEF/loop filter, and worker threads on
-# wasm32 through an embedder-provided spawner (see docs/rav1d.md).
+# wasm32 SIMD128 kernels for MC/warp/CDEF/loop filter, worker threads on
+# wasm32 through an embedder-provided spawner, and a flush that drops pending
+# input (see docs/rav1d.md). Optional only so that a `rivet-av1` build can
+# leave it out; `bitdepth_8` / `bitdepth_16` switch it on, so every feature
+# selection that worked before this was optional still gets it.
 # Nothing of it is vendored here; Cargo.lock pins the exact revision.
-rav1d = { git = "https://github.com/safewords/rav1d", branch = "main", default-features = false }
+rav1d = { git = "https://github.com/safewords/rav1d", branch = "main", default-features = false, optional = true }
+# rivet-av1 (imported as `av1`), behind the non-default `rivet-av1` feature:
+# rivet's own AV1 decoder, written from the specification. Bit-exact on every
+# fixture here, about half rav1d's speed in wasm, and two things this crate
+# promises need changes that are not in rivet `develop` yet — see
+# docs/rivet-av1.md before turning it on. Taken from rivet `develop` like
+# rivet-container (it is a submodule there); Cargo.lock pins the revision.
+av1 = { git = "https://github.com/rivet-transcoder/rivet", branch = "develop", package = "rivet-av1", optional = true }
 # The demuxers: MP4/fMP4/CMAF, WebM/MKV, TS. rivet is the org's own transcoder;
 # its `rivet-container` crate hands us AV1 temporal units + pts straight out of
 # a container. rivet `develop` carries the commit that lets the crate build
@@ -34,7 +46,8 @@ wasm-bindgen = "0.2"
 # The threads variants: rav1d's mutexes/condvars are parking_lot's, whose real
 # wasm parker (memory.atomic.wait/notify) sits behind its `nightly` feature —
 # without it a worker thread panics on its first wait. Those builds run with
-# RUSTC_BOOTSTRAP=1 anyway (-Zbuild-std, see scripts/build.sh).
+# RUSTC_BOOTSTRAP=1 anyway (-Zbuild-std, see scripts/build.sh). (rivet-av1
+# waits on std's own mutexes and condvars and does not use it.)
 [target.'cfg(all(target_arch = "wasm32", target_feature = "atomics"))'.dependencies]
 parking_lot_core = { version = "0.9", features = ["nightly"] }
 
@@ -48,10 +61,26 @@ wasm-bindgen-test = "0.3"
 default = ["bitdepth_8", "bitdepth_16", "container"]
 # MP4/fMP4/WebM/TS input via rivet-container (`setSourceContainer`).
 container = ["dep:container", "dep:bytes"]
-# Which sample depths the decoder is compiled for. Dropping `bitdepth_16` makes
-# the .wasm noticeably smaller if every stream you serve is 8-bit.
+# Which sample depths rav1d is compiled for — and that rav1d is compiled at
+# all. Dropping `bitdepth_16` makes the .wasm noticeably smaller if every
+# stream you serve is 8-bit. (rivet-av1 decodes every depth with one code
+# path: under `rivet-av1` these change nothing but still link rav1d in, so a
+# rivet-av1 build wants `--no-default-features`.)
 bitdepth_8 = ["rav1d/bitdepth_8"]
 bitdepth_16 = ["rav1d/bitdepth_16"]
+# Decode with rivet-av1 instead of rav1d (docs/rivet-av1.md). As rivet
+# `develop` has it: no decoding without film grain (`apply_grain: false` is
+# refused), and the wasm threads variants decode on one thread.
+#   cargo test --release --no-default-features --features rivet-av1,container
+rivet-av1 = ["dep:av1"]
+# The rest of the rivet-av1 core: the film grain switch, and its threads as a
+# pool of Web Workers on wasm. Needs three rivet-av1 commits that are not
+# upstream yet, so it only builds with a checkout of that branch overriding
+# the dependency — docs/rivet-av1.md has the commits and the command:
+#   cargo --config "paths=['/path/to/rivet-av1']" test --release \
+#     --no-default-features --features rivet-av1-pending,container
+# Goes away (its code becomes plain `rivet-av1`) once rivet has them.
+rivet-av1-pending = ["rivet-av1"]
 
 [profile.release]
 opt-level = 3
@@ -61,7 +90,7 @@ panic = "abort"
 debug = false
 strip = "debuginfo"
 
-# The native harness/tests decode real streams; unoptimised rav1d is painfully slow.
+# The native harness/tests decode real streams; an unoptimised decoder is painfully slow.
 [profile.dev.package."*"]
 opt-level = 2
 

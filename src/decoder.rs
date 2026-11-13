@@ -1,4 +1,9 @@
-//! The decoder: rav1d driven the way upstream drove libaom.
+//! The decoder: an AV1 decoder core driven the way upstream drove libaom.
+//!
+//! The core is rav1d — which is what the comments below name — or, with the
+//! `rivet-av1` feature, rivet's own decoder; `src/core_*.rs` put both behind
+//! the same five calls. rivet-av1 decodes a temporal unit in one call, so
+//! with it the "pending input" and "in flight" states below never arise.
 //!
 //! Upstream's `AVX_Decoder` (`decode-av1.c`) is a pull model built for a
 //! `requestAnimationFrame` loop: the page calls `run()` once per tick, which
@@ -25,8 +30,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use rav1d::{Rav1dError, Settings};
-
+use crate::core::{self, Core, CoreError};
 use crate::frame::Frame;
 use crate::ivf::{IvfError, IvfHeader, IvfReader};
 
@@ -44,10 +48,11 @@ pub struct Config {
     /// Apply film grain synthesis in the decoder (a per-frame CPU cost; the
     /// stream is still valid without it, just cleaner than the encoder meant).
     pub apply_grain: bool,
-    /// rav1d worker threads (frame + tile threading). Natively any number; on
+    /// Worker threads of the decoder core (rav1d: frame + tile threading;
+    /// rivet-av1: tiles and post-filter bands). Natively any number; on
     /// wasm only the `threads` build (atomics + shared memory) can run more
     /// than one and other builds force 1 — see [`crate::THREADS_SUPPORTED`].
-    /// With more than one thread rav1d blocks the calling thread while it
+    /// With more than one thread the core blocks the calling thread while it
     /// waits for workers, so on wasm the decoder must live in a Worker.
     pub threads: u32,
 }
@@ -71,10 +76,10 @@ pub enum Error {
     #[cfg(feature = "container")]
     Container(String),
     /// The decoder could not be created.
-    Open(Rav1dError),
-    /// rav1d rejected the bitstream. The decoder is still usable; the offending
-    /// temporal unit was dropped.
-    Decode(Rav1dError),
+    Open(CoreError),
+    /// The core rejected the bitstream. The decoder is still usable; the
+    /// offending temporal unit was dropped.
+    Decode(CoreError),
     /// [`Decoder::run`] was called with no source and no pushed data.
     NoSource,
     /// Called an IVF-only or push-only method in the other mode.
@@ -92,8 +97,8 @@ impl fmt::Display for Error {
             ),
             #[cfg(feature = "container")]
             Error::Container(msg) => write!(f, "container: {msg}"),
-            Error::Open(e) => write!(f, "could not open rav1d: {e}"),
-            Error::Decode(e) => write!(f, "rav1d: {e}"),
+            Error::Open(e) => write!(f, "could not open {}: {e}", core::NAME),
+            Error::Decode(e) => write!(f, "{}: {e}", core::NAME),
             Error::NoSource => write!(
                 f,
                 "no source: call set_source_ivf or push_temporal_unit first"
@@ -188,7 +193,7 @@ impl ContainerInfo {
 
 /// The AV1 decoder with its ring of decoded frames.
 pub struct Decoder {
-    inner: rav1d::Decoder,
+    inner: Core,
     config: Config,
     source: Option<Source>,
     ring: VecDeque<Frame>,
@@ -240,26 +245,9 @@ pub fn effective_threads(config: &Config) -> u32 {
     }
 }
 
-fn open_rav1d(config: &Config) -> Result<rav1d::Decoder, Error> {
-    let threads = effective_threads(config);
-    #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
-    if threads > 1 {
-        crate::threads::install();
-    }
-    let mut settings = Settings::new();
-    settings.set_n_threads(threads);
-    settings.set_apply_grain(config.apply_grain);
-    // One thread: one frame of delay, nothing to overlap. More: let rav1d
-    // pick its frame-thread count from the thread count (dav1d's default,
-    // ceil(sqrt(n)) capped at 8); frames come out a few later, which the
-    // ring absorbs.
-    settings.set_max_frame_delay(if threads > 1 { 0 } else { 1 });
-    rav1d::Decoder::with_settings(&settings).map_err(Error::Open)
-}
-
 impl Decoder {
     pub fn new(config: Config) -> Result<Decoder, Error> {
-        let inner = open_rav1d(&config)?;
+        let inner = Core::open(&config).map_err(Error::Open)?;
         Ok(Decoder {
             inner,
             config,
@@ -553,15 +541,11 @@ impl Decoder {
         Ok(())
     }
 
-    /// Start rav1d over. A fresh instance rather than `flush()`: rav1d's
-    /// `flush` keeps any input it had not finished taking (`send_data` would
-    /// then panic), and it leaves decoded pictures retrievable, both of which
-    /// are exactly what a seek must not carry across.
+    /// Start the core over: everything in flight, delayed or half taken is
+    /// dropped, and the headers with it. The worker threads survive (rav1d's
+    /// `flush` keeps its context; rivet-av1's belong to a pool), so on wasm
+    /// a seek does not tear Workers down and spawn them again.
     fn reset_state(&mut self) -> Result<(), Error> {
-        // rav1d's own flush: drops in-flight and delayed frames and the
-        // headers, keeps the context — and with it the worker threads, which
-        // on wasm are Workers that would otherwise be torn down and
-        // re-spawned on every seek.
         self.inner.flush();
         self.ring.clear();
         self.current = None;
@@ -571,7 +555,7 @@ impl Decoder {
         self.last_sent_pts = None;
         #[cfg(feature = "container")]
         {
-            // After a flush rav1d has forgotten the sequence header too.
+            // After a flush the core has forgotten the sequence header too.
             self.ensure_seq_hdr = true;
         }
         Ok(())
@@ -653,9 +637,9 @@ impl Decoder {
 
         // rav1d asked us to pull pictures before it takes the rest of the last input.
         if self.input_pending {
-            match self.inner.send_pending_data() {
-                Ok(()) => self.input_pending = false,
-                Err(Rav1dError::TryAgain) => {
+            match self.inner.send_pending() {
+                Ok(true) => self.input_pending = false,
+                Ok(false) => {
                     self.collect_pictures();
                     return Ok(RunOutcome::Consumed);
                 }
@@ -713,12 +697,9 @@ impl Decoder {
         self.drained = false;
         self.needs_drain = true;
         self.last_sent_pts = Some(pts);
-        match self
-            .inner
-            .send_data(data.into_boxed_slice(), None, Some(pts), None)
-        {
-            Ok(()) => {}
-            Err(Rav1dError::TryAgain) => self.input_pending = true,
+        match self.inner.send(data, pts) {
+            Ok(true) => {}
+            Ok(false) => self.input_pending = true,
             Err(e) => {
                 self.stats.decode_errors += 1;
                 // The unit is dropped; the decoder itself is fine to continue.
@@ -738,11 +719,11 @@ impl Decoder {
     /// call is a cheap TryAgain.
     fn drain_in_flight(&mut self) {
         while self.ring.len() < self.config.max_buffered {
-            match self.inner.get_picture() {
-                Ok(pic) => self.push_picture(&pic),
-                Err(_) => {
-                    // TryAgain in drain state: nothing left in flight (an
-                    // error here is a frame that failed; nothing to keep).
+            match self.inner.picture() {
+                Ok(Some(frame)) => self.push_picture(frame),
+                Ok(None) | Err(_) => {
+                    // Nothing left in flight (an error here is a frame that
+                    // failed; nothing to keep).
                     self.needs_drain = false;
                     return;
                 }
@@ -751,8 +732,7 @@ impl Decoder {
         // Ring full; the rest waits for the next call.
     }
 
-    fn push_picture(&mut self, pic: &rav1d::Picture) {
-        let frame = Frame::from_picture(pic);
+    fn push_picture(&mut self, frame: Frame) {
         self.last_size = Some((frame.width, frame.height));
         self.ring.push_back(frame);
         self.stats.frames_out += 1;
@@ -761,15 +741,15 @@ impl Decoder {
     /// Move every picture rav1d has ready into the ring, up to capacity.
     fn collect_pictures(&mut self) {
         while self.ring.len() < self.config.max_buffered {
-            match self.inner.get_picture() {
-                Ok(pic) => self.push_picture(&pic),
-                Err(Rav1dError::TryAgain) => {
+            match self.inner.picture() {
+                Ok(Some(frame)) => self.push_picture(frame),
+                Ok(None) => {
                     self.drained = true;
                     return;
                 }
                 Err(_) => {
                     // A picture-level error (e.g. a corrupt frame). Count it and
-                    // keep pulling; rav1d recovers at the next keyframe.
+                    // keep pulling; the core recovers at the next keyframe.
                     self.stats.decode_errors += 1;
                     self.drained = true;
                     return;

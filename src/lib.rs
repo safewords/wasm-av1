@@ -4,7 +4,11 @@
 //! compiled to WebAssembly, behind the small streaming API that
 //! [GoogleChromeLabs/wasm-av1] put in front of libaom — ported here from C.
 //!
-//! The crate builds three ways:
+//! The decoder core is rav1d unless the crate is built with the `rivet-av1`
+//! feature, which swaps in rivet's own AV1 decoder (see `docs/rivet-av1.md`
+//! for what that does and does not do yet); everything below names rav1d.
+//!
+//! The crate builds four ways:
 //!
 //! * **native** (`cargo build`, `cargo test`): the same decoder as a Rust
 //!   library, used by the CLI harness in `examples/` and the tests, which
@@ -25,30 +29,54 @@
 //! | module | upstream | job |
 //! |---|---|---|
 //! | [`ivf`] | `init_avx`, `blob-api.c` | IVF container over an owned buffer |
-//! | [`decoder`] | `AVX_Decoder_*` | run/next_frame/finished ring around rav1d |
+//! | [`decoder`] | `AVX_Decoder_*` | run/next_frame/finished ring around the decoder core |
+//! | `core` (private) | libaom itself | the core behind five calls: `core_rav1d.rs`, or `core_rivet.rs` with `rivet-av1` |
 //! | [`frame`] | `buffer_frame`, `AVX_Video_Frame` | packed planes + geometry + colour |
 //! | [`convert`] | `yuv-to-rgb.c` | YUV→RGBA, scalar and SIMD128 |
 //! | [`wasm`] | `EXPORTED_FUNCTIONS` | the wasm-bindgen surface |
+//! | [`threads`] | — | threads builds only: the core's worker threads as Web Workers |
 //!
 //! [rav1d]: https://github.com/memorysafety/rav1d
 //! [GoogleChromeLabs/wasm-av1]: https://github.com/GoogleChromeLabs/wasm-av1
 
 pub mod convert;
+#[cfg(not(any(feature = "rivet-av1", feature = "rav1d")))]
+compile_error!(
+    "wasm-av1 needs a decoder core: enable `bitdepth_8` and/or `bitdepth_16` (rav1d, the default), or `rivet-av1`"
+);
+#[cfg(all(feature = "rav1d", not(feature = "rivet-av1")))]
+#[path = "core_rav1d.rs"]
+mod core;
+#[cfg(feature = "rivet-av1")]
+#[path = "core_rivet.rs"]
+mod core;
 pub mod decoder;
 pub mod frame;
 pub mod ivf;
 
-#[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "atomics",
+    any(not(feature = "rivet-av1"), feature = "rivet-av1-pending")
+))]
 pub mod threads;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
-/// True when this build can run rav1d's worker threads (native, or wasm
-/// with the `atomics` target feature — see [`threads`]).
-pub const THREADS_SUPPORTED: bool =
-    cfg!(any(not(target_arch = "wasm32"), target_feature = "atomics"));
+/// True when this build can run the core's worker threads: native, or wasm
+/// with the `atomics` target feature (see [`threads`]) — except a
+/// `rivet-av1` build without `rivet-av1-pending`, whose core cannot start
+/// threads on wasm yet.
+pub const THREADS_SUPPORTED: bool = cfg!(any(
+    not(target_arch = "wasm32"),
+    all(
+        target_feature = "atomics",
+        any(not(feature = "rivet-av1"), feature = "rivet-av1-pending")
+    )
+));
 
 pub use convert::{simd_enabled, yuv_to_rgba, Coefficients};
+pub use core::CoreError;
 #[cfg(feature = "container")]
 pub use decoder::ContainerInfo;
 pub use decoder::{Config, Decoder, Error, RunOutcome, Stats};

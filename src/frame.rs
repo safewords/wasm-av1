@@ -12,8 +12,6 @@
 //! 10/12-bit streams give two (little-endian, the value in the low bits) —
 //! i.e. `yuv420p` / `yuv420p10le` in ffmpeg's vocabulary.
 
-use rav1d::{Picture, PixelLayout as Rav1dLayout, PlanarImageComponent};
-
 /// Chroma subsampling of a frame, in the AV1 numbering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -51,17 +49,6 @@ impl PixelLayout {
             3 => PixelLayout::I444,
             _ => return None,
         })
-    }
-}
-
-impl From<Rav1dLayout> for PixelLayout {
-    fn from(l: Rav1dLayout) -> Self {
-        match l {
-            Rav1dLayout::I400 => PixelLayout::I400,
-            Rav1dLayout::I420 => PixelLayout::I420,
-            Rav1dLayout::I422 => PixelLayout::I422,
-            Rav1dLayout::I444 => PixelLayout::I444,
-        }
     }
 }
 
@@ -168,60 +155,6 @@ impl Frame {
             }
         }
         (planes, total)
-    }
-
-    /// Copy a decoded rav1d picture into a packed frame — `buffer_frame()`.
-    pub fn from_picture(pic: &Picture) -> Frame {
-        let width = pic.width() as usize;
-        let height = pic.height() as usize;
-        // rav1d reports the storage width (8 or 16) as `bit_depth` and the
-        // stream's precision (8/10/12) as `bits_per_component`.
-        let bytes_per_sample = if pic.bit_depth() > 8 { 2 } else { 1 };
-        let bit_depth = pic
-            .bits_per_component()
-            .map(|b| b.0)
-            .unwrap_or(if bytes_per_sample == 2 { 10 } else { 8 });
-        let layout = PixelLayout::from(pic.pixel_layout());
-        let (planes, total) = Self::geometry(width, height, bytes_per_sample, layout);
-
-        let mut data = vec![0u8; total];
-        let components = [
-            PlanarImageComponent::Y,
-            PlanarImageComponent::U,
-            PlanarImageComponent::V,
-        ];
-        for (info, comp) in planes.iter().zip(components) {
-            if info.is_empty() {
-                continue;
-            }
-            // Picture strides are in bytes (dav1d semantics), possibly larger
-            // than the visible row and padded; copy row by row, visible part only.
-            let src = pic.plane(comp);
-            let src_stride = pic.stride(comp) as usize;
-            let row_bytes = info.stride;
-            let dst = &mut data[info.offset..info.offset + info.len()];
-            for (y, dst_row) in dst.chunks_exact_mut(row_bytes).enumerate() {
-                let s = y * src_stride;
-                dst_row.copy_from_slice(&src[s..s + row_bytes]);
-            }
-        }
-
-        Frame {
-            width,
-            height,
-            bit_depth,
-            bytes_per_sample: bytes_per_sample as u8,
-            layout,
-            planes,
-            pts: pic.timestamp(),
-            color: ColorInfo {
-                matrix: pic.matrix_coefficients() as u8,
-                primaries: pic.color_primaries() as u8,
-                transfer: pic.transfer_characteristic() as u8,
-                full_range: matches!(pic.color_range(), rav1d::pixel::YUVRange::Full),
-            },
-            data,
-        }
     }
 
     /// The bytes of one plane.

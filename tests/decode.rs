@@ -195,6 +195,22 @@ fn flush_at_any_point_leaves_a_working_decoder() {
     }
 }
 
+// rivet-av1 as rivet `develop` has it cannot leave film grain out; the
+// switch is behind `rivet-av1-pending` (docs/rivet-av1.md).
+#[cfg(all(feature = "rivet-av1", not(feature = "rivet-av1-pending")))]
+#[test]
+fn decoding_without_film_grain_is_refused_until_rivet_av1_has_the_switch() {
+    let refused = Decoder::new(Config {
+        apply_grain: false,
+        ..Config::default()
+    });
+    assert!(matches!(refused, Err(wasm_av1::Error::Open(_))));
+    // Grain applied, the default, matches the reference like any fixture
+    // (every_fixture_matches_ffmpeg covers the grain fixture).
+    assert!(Decoder::new(Config::default()).is_ok());
+}
+
+#[cfg(any(not(feature = "rivet-av1"), feature = "rivet-av1-pending"))]
 #[test]
 fn film_grain_is_applied_by_default_and_can_be_disabled() {
     let fx = fixtures()
@@ -349,6 +365,64 @@ fn garbage_input_errors_without_wedging_the_decoder() {
         }
     }
     assert_eq!(n, fx.frames);
+}
+
+#[test]
+fn a_unit_that_lost_its_tiles_costs_no_more_than_its_gop() {
+    // Temporal units as MP4 hands them over — no temporal delimiter in
+    // front — and one of them cut off after its frame header: the frame it
+    // announces never arrives. Whatever the core makes of the frames that
+    // referenced it, it must not stay stuck on the unfinished frame: from
+    // the next keyframe on every frame is there and exact.
+    let fx = fixtures()
+        .into_iter()
+        .find(|f| f.name == "testsrc-320x180-8bit")
+        .unwrap();
+    let data = fs::read(&fx.ivf).unwrap();
+    let (reference, _) = decode_all(data.clone(), Config::default());
+    let mut reader = wasm_av1::IvfReader::new(data).unwrap();
+    let mut units = Vec::new();
+    while let Some(f) = reader.next_frame().unwrap() {
+        // Drop the temporal delimiter (OBU type 2, size 0).
+        let tu = f.data.strip_prefix(&[0x12, 0x00]).unwrap_or(f.data);
+        units.push((tu.to_vec(), f.pts as i64));
+    }
+    // Unit 5 is an inter frame: an OBU_FRAME_HEADER (type 3, with a size
+    // field of one byte), then its tile group. Keep the header alone.
+    let victim = &mut units[5].0;
+    assert_eq!(victim[0], 0x1a, "a frame header OBU with a size field");
+    assert!(victim[1] < 0x80, "whose size is one byte");
+    victim.truncate(2 + victim[1] as usize);
+
+    let mut dec = Decoder::new(Config::default()).unwrap();
+    for (d, pts) in &units {
+        dec.push_temporal_unit(d.clone(), *pts).unwrap();
+    }
+    dec.end_of_stream();
+    let mut got = Vec::new();
+    let mut guard = 0;
+    while !dec.finished() {
+        let _ = dec.run();
+        while let Some(f) = dec.next_frame() {
+            got.push(f.clone());
+        }
+        guard += 1;
+        assert!(guard < 100_000, "decoder never finished");
+    }
+    // The fixture has a keyframe every 12 frames (`-g 12`): 0..5 came
+    // before the damage, 12.. after the next keyframe.
+    let exact = |range: std::ops::Range<i64>| {
+        for pts in range {
+            let want = &reference[pts as usize];
+            let have = got
+                .iter()
+                .find(|f| f.pts == Some(pts))
+                .unwrap_or_else(|| panic!("frame {pts} is missing"));
+            assert_eq!(have.data, want.data, "frame {pts}");
+        }
+    };
+    exact(0..5);
+    exact(12..fx.frames as i64);
 }
 
 #[test]

@@ -3,8 +3,8 @@
 #
 #   pkg/baseline/      post-MVP wasm, no SIMD
 #   pkg/simd/          + simd128 (NEON / SSE in the browser's JIT)
-#   pkg/threads/       baseline + atomics and shared memory: rav1d's worker
-#                      threads run as Web Workers (pkg/thread-worker.js)
+#   pkg/threads/       baseline + atomics and shared memory: the decoder's
+#                      worker threads run as Web Workers (pkg/thread-worker.js)
 #   pkg/simd-threads/  both
 #
 # each `wasm_av1.js + wasm_av1_bg.wasm`. js/loader.js picks one at runtime by
@@ -23,6 +23,7 @@
 #   scripts/build.sh            # release, all variants
 #   scripts/build.sh --dev      # unoptimised, with debug info
 #   FEATURES=bitdepth_8 scripts/build.sh   # 8-bit-only decoder (smaller)
+#   FEATURES=rivet-av1,container scripts/build.sh   # rivet-av1 instead of rav1d (docs/rivet-av1.md)
 #   VARIANTS="simd simd-threads" scripts/build.sh   # a subset
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -38,6 +39,13 @@ FEATURE_FLAGS=()
 if [ -n "$FEATURES" ]; then
   FEATURE_FLAGS=(--no-default-features --features "$FEATURES")
 fi
+# Which decoder core this build has, for the manifest: rav1d unless a
+# rivet-av1 feature is asked for (src/lib.rs picks the same way).
+case ",$FEATURES," in
+  *,rivet-av1,*|*,rivet-av1-pending,*) CORE=rivet-av1 ;;
+  *) CORE=rav1d ;;
+esac
+lock_rev() { sed -n "/^name = \"$1\"\$/{n;n;s/source = \".*#\(.*\)\"/\1/p}" Cargo.lock; }
 
 want_bindgen=$(sed -n '/^name = "wasm-bindgen"$/{n;s/version = "\(.*\)"/\1/p}' Cargo.lock)
 have_bindgen=$(wasm-bindgen --version | awk '{print $2}')
@@ -91,10 +99,10 @@ for v in $VARIANTS; do
     # multivalue) — Chrome 96+, Firefox 89+, Safari 15+.
     baseline) build_variant baseline "" ;;
     # SIMD: adds simd128 — Chrome 91+, Firefox 89+, Safari 16.4+. Same source; the
-    # whole of rav1d gets vectorised loops and convert.rs takes its v128 path.
+    # whole decoder gets vectorised loops and convert.rs takes its v128 path.
     simd) build_variant simd "-C target-feature=+simd128" ;;
     # Threads: atomics + shared memory (Chrome 74+/Firefox 79+/Safari 15.2+ on
-    # a cross-origin-isolated page). rav1d's worker threads become Workers.
+    # a cross-origin-isolated page). The decoder's worker threads become Workers.
     threads) build_variant threads "-C target-feature=+atomics,+bulk-memory,+mutable-globals $THREADS_LINK" threads ;;
     simd-threads) build_variant simd-threads "-C target-feature=+simd128,+atomics,+bulk-memory,+mutable-globals $THREADS_LINK" threads ;;
     *) echo "unknown variant $v" >&2; exit 1 ;;
@@ -109,7 +117,9 @@ cp js/thread-worker.js pkg/thread-worker.js
 cat > pkg/manifest.json <<EOF
 {
   "version": "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)",
-  "rav1d": "$(sed -n '/^name = "rav1d"$/{n;n;s/source = ".*#\(.*\)"/\1/p}' Cargo.lock)",
+  "core": "$CORE",
+$( [ "$CORE" = rav1d ] && echo "  \"rav1d\": \"$(lock_rev rav1d)\"," )
+  "rivet": "$(lock_rev rivet-container)",
   "profile": "$PROFILE",
   "features": "${FEATURES:-default}",
   "threadWorker": "thread-worker.js",

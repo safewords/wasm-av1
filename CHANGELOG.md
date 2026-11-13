@@ -13,6 +13,13 @@ A release is a `v*` tag matching the version in `package.json` and
 The version in `Cargo.toml` and `package.json` is 0.3.0: this section
 becomes that release when it is tagged.
 
+### Changed
+
+- rivet-av1 moves to `f6f1ee1` (rivet `7647f35`), the first round of its
+  speed work: one thread in wasm is 1.2 to 1.9 times faster than 0.3.0 first
+  built, at 0.54 to 0.88 of rav1d on 8-bit video and level with or ahead of
+  it on 10-bit in the SIMD build. Output is unchanged, bit for bit.
+
 ### Removed
 
 - **rav1d.** The decoder is rivet-av1, rivet's own AV1 decoder, and nothing

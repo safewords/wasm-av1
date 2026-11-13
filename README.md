@@ -17,8 +17,9 @@ allows threads, instead of a fallback rung in another codec.
 
 **How fast it is, plainly.** Up to 0.2.2 the decoder was rav1d. Since 0.3.0
 it is rivet-av1 and nothing else, and it is slower: as measured on
-2026-11-12, rivet-av1 in wasm decodes 8-bit video at roughly a third to two
-thirds of rav1d's single-thread rate (10-bit comes close in the SIMD build),
+2026-11-12 after a first round of speed work, rivet-av1 in wasm decodes
+8-bit video at 0.54 to 0.88 of rav1d's single-thread rate (10-bit matches or
+beats it in the SIMD build),
 and it scales poorly with threads — 1.2 to 1.3 times on eight for a stream
 with one tile per frame, where rav1d reached about 3.5. The output is
 bit-exact. The performance work is under way in rivet-av1; the numbers, with
@@ -159,17 +160,25 @@ Measured on 2026-11-12 on one Apple silicon laptop (Node 26 / V8, `.wasm`
 without `wasm-opt`), with the rav1d build of 0.2.x beside it, built the same
 way. rav1d is no longer in this project; its column is the baseline the
 performance work in rivet-av1 is measured against. Frames per second, one
-thread, decode only (median of 7):
+thread, decode only (median of 7). "first" is rivet-av1 as 0.3.0 first built
+it (`3c2c549`); "now" is the revision `Cargo.lock` pins and `pkg/` holds
+(`f6f1ee1`, the first round of speed work):
 
-| stream | baseline: rav1d | rivet-av1 (0.3.0) | SIMD: rav1d | rivet-av1 (0.3.0) |
-|---|---|---|---|---|
-| fixture 320×180, 8-bit | 1163 | 576 (0.50×) | 1703 | 839 (0.49×) |
-| AOM `av1-1-b8-00-quantizer-20`, 352×288 | 188 | 101 (0.54×) | 281 | 176 (0.63×) |
-| AOM `av1-1-b10-00-quantizer-10`, 352×288 10-bit | 70.9 | 37.8 (0.53×) | 72.9 | 62.9 (0.86×) |
-| SVT-AV1 testsrc2, 1280×720 | 175 | 58.1 (0.33×) | 296 | 107 (0.36×) |
-| SVT-AV1 mandelbrot + noise, 1280×720 | 65.0 | 29.7 (0.46×) | 145 | 60.8 (0.42×) |
-| SVT-AV1 mandelbrot + noise, 1280×720 10-bit | 73.4 | 36.2 (0.49×) | 80.4 | 77.8 (0.97×) |
-| SVT-AV1 mandelbrot + noise, 1920×1080 | 31.8 | 15.1 (0.47×) | 73.8 | 31.5 (0.43×) |
+| stream | baseline: rav1d | first | now | SIMD: rav1d | first | now |
+|---|---|---|---|---|---|---|
+| fixture 320×180, 8-bit | 1184 | 606 | 732 (0.62×) | 1771 | 853 | 1060 (0.60×) |
+| AOM `av1-1-b8-00-quantizer-20`, 352×288 | 201 | 102 | 150 (0.75×) | 291 | 179 | 218 (0.75×) |
+| AOM `av1-1-b10-00-quantizer-10`, 352×288 10-bit | 70.3 | 39.4 | 59.6 (0.85×) | 73.2 | 64.5 | 81.1 (1.11×) |
+| SVT-AV1 testsrc2, 1280×720 | 187 | 61.7 | 117 (0.63×) | 320 | 113 | 172 (0.54×) |
+| SVT-AV1 mandelbrot + noise, 1280×720 | 67.9 | 31.0 | 48.4 (0.71×) | 152 | 62.9 | 91.1 (0.60×) |
+| SVT-AV1 mandelbrot + noise, 1280×720 10-bit | 78.4 | 37.2 | 60.6 (0.77×) | 85.5 | 80.6 | 125 (1.46×) |
+| SVT-AV1 mandelbrot + noise, 1920×1080 | 33.5 | 15.6 | 23.9 (0.71×) | 78.8 | 33.3 | 49.0 (0.62×) |
+
+These were measured in rivet-av1's own harness, not re-measured through this
+package; its `docs/wasm-performance.md` has every stream, the native
+numbers, what each change bought and the profile of what is left. The thread
+figures below are from before that round and are unchanged by it: frame
+threading has not been started.
 
 Threads, the SIMD + threads build in Node (each wasm thread a Worker on the
 shared memory), frames per second:

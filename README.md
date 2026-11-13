@@ -43,10 +43,10 @@ defects.
 ## What you get
 
 ```
-pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     2.86 MB (992 KB gzip)   Chrome 96 / Firefox 89 / Safari 15
-pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 3.40 MB (1.12 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
-pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  2.91 MB (1.00 MB gzip)  + cross-origin isolation (Safari 15.2)
-pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      3.45 MB (1.14 MB gzip)  + cross-origin isolation
+pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     2.87 MB (994 KB gzip)   Chrome 96 / Firefox 89 / Safari 15
+pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 3.43 MB (1.13 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
+pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  2.92 MB (1.00 MB gzip)  + cross-origin isolation (Safari 15.2)
+pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      3.48 MB (1.15 MB gzip)  + cross-origin isolation
 pkg/thread-worker.js               the Worker each decoder thread runs in
 js/                                ESM wrapper: loader + feature detection, Decoder, WebGL/2D renderers, Worker, Av1Player, HlsAv1Video
 ```
@@ -54,7 +54,8 @@ js/                                ESM wrapper: loader + feature detection, Deco
 Those sizes are CI's build of 0.3.0 with `wasm-opt -O3` (2026-11-12), which
 is what `pkg/` holds. The same CI built the last rav1d commit that day at
 3.30 MB baseline and 3.70 MB SIMD, so the change of decoder made each variant
-8 to 13% smaller. The 0.2.2 package was smaller still (1.70 MB baseline,
+7 to 13% smaller (the speed work's kernels added back about 30 KB to the
+SIMD builds). The 0.2.2 package was smaller still (1.70 MB baseline,
 606 KB gzip) because it was built in August, before the rivet-container
 update of 2026-11-06 that most of each file now is: without the `container`
 feature a local build without `wasm-opt` is 681 KB baseline (268 KB gzip)

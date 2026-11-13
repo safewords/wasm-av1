@@ -1,14 +1,14 @@
 {
   "version": "0.3.0",
   "core": "rivet-av1",
-  "rivet": "b580fc6aae9070c7600f754160feb0c31ae7d054",
+  "rivet": "7647f35cbac63b85fd3f9ce0823912afc353abe1",
   "profile": "release",
   "features": "default",
   "threadWorker": "thread-worker.js",
   "variants": {
-    "baseline": { "wasm": "baseline/wasm_av1_bg.wasm", "js": "baseline/wasm_av1.js", "bytes": 2862132 },
-    "simd": { "wasm": "simd/wasm_av1_bg.wasm", "js": "simd/wasm_av1.js", "bytes": 3396304 },
-    "threads": { "wasm": "threads/wasm_av1_bg.wasm", "js": "threads/wasm_av1.js", "bytes": 2912171 },
-    "simd-threads": { "wasm": "simd-threads/wasm_av1_bg.wasm", "js": "simd-threads/wasm_av1.js", "bytes": 3450551 }
+    "baseline": { "wasm": "baseline/wasm_av1_bg.wasm", "js": "baseline/wasm_av1.js", "bytes": 2865619 },
+    "simd": { "wasm": "simd/wasm_av1_bg.wasm", "js": "simd/wasm_av1.js", "bytes": 3425822 },
+    "threads": { "wasm": "threads/wasm_av1_bg.wasm", "js": "threads/wasm_av1.js", "bytes": 2915843 },
+    "simd-threads": { "wasm": "simd-threads/wasm_av1_bg.wasm", "js": "simd-threads/wasm_av1.js", "bytes": 3480307 }
   }
 }

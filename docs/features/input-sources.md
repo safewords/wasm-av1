@@ -3,7 +3,7 @@
 > **Status:** STABLE
 > **Owners (code):** `src/decoder.rs`, `src/ivf.rs`, `src/wasm.rs` (input section), `js/decoder.js` (`sniff`, `switchStream`)
 > **Related docs:** [decoder-core.md](./decoder-core.md), [player-and-hls.md](./player-and-hls.md), [`../rivet.md`](../rivet.md), [`../integration.md`](../integration.md)
-> **Last verified against code:** 2026-11-06 @ `07e0968`
+> **Last verified against code:** 2026-11-12 @ `4386183`
 
 ## Overview
 
@@ -32,14 +32,14 @@ flowchart LR
 
 | wasm (`Av1Decoder`) | Rust (`Decoder`) | Mode | Notes |
 |---|---|---|---|
-| `setSourceIvf(bytes)` | `set_source_ivf` (`src/decoder.rs:298-309`) | IVF | Copies the file in; rejects a fourcc other than `AV01` |
-| `setSourceContainer(bytes)` | `set_source_container` (`src/decoder.rs:323-341`) | Container | MP4/MOV, fMP4/CMAF, WebM/MKV, MPEG-TS, and since rivet `2100c31` IVF too; rejects a non-AV1 video track |
-| `setInitSegment(init)` | `set_init_segment` (`src/decoder.rs:350-363`) | Push | Keeps `ftyp`+`moov`, extracts the `av1C` configOBUs |
-| `pushSegment(seg)` | `push_segment` (`src/decoder.rs:371-430`) | Push | Demuxes `init ‖ segment`, queues every sample; returns the count |
-| `pushTemporalUnit(obus, pts)` | `push_temporal_unit` (`src/decoder.rs:471-484`) | Push | One sample's OBUs |
-| `endOfStream()` | `end_of_stream` (`src/decoder.rs:488-492`) | Push | Lets `finished` become true |
-| `truncateQueuedFrom(pts)` | `truncate_queued_from` (`src/decoder.rs:526-536`) | Push | Drops queued, undecoded units with `pts >= pts` |
-| `pendingInput`, `nextQueuedPts`, `lastSentPts`, `lastSegmentFirstPts/LastPts` | `src/decoder.rs:495-514`, `436-438` | Push | What a rendition switch needs to pick a safe boundary |
+| `setSourceIvf(bytes)` | `set_source_ivf` (`src/decoder.rs:286-297`) | IVF | Copies the file in; rejects a fourcc other than `AV01` |
+| `setSourceContainer(bytes)` | `set_source_container` (`src/decoder.rs:311-329`) | Container | MP4/MOV, fMP4/CMAF, WebM/MKV, MPEG-TS, and since rivet `2100c31` IVF too; rejects a non-AV1 video track |
+| `setInitSegment(init)` | `set_init_segment` (`src/decoder.rs:338-351`) | Push | Keeps `ftyp`+`moov`, extracts the `av1C` configOBUs |
+| `pushSegment(seg)` | `push_segment` (`src/decoder.rs:359-418`) | Push | Demuxes `init ‖ segment`, queues every sample; returns the count |
+| `pushTemporalUnit(obus, pts)` | `push_temporal_unit` (`src/decoder.rs:459-472`) | Push | One sample's OBUs |
+| `endOfStream()` | `end_of_stream` (`src/decoder.rs:476-480`) | Push | Lets `finished` become true |
+| `truncateQueuedFrom(pts)` | `truncate_queued_from` (`src/decoder.rs:514-524`) | Push | Drops queued, undecoded units with `pts >= pts` |
+| `pendingInput`, `nextQueuedPts`, `lastSentPts`, `lastSegmentFirstPts/LastPts` | `src/decoder.rs:483-502`, `424-426` | Push | What a rendition switch needs to pick a safe boundary |
 
 JS: `Decoder.setSource(bytes)` sniffs the magic bytes (`js/decoder.js:132-140`)
 and sends IVF to `setSourceIvf`, everything else to `setSourceContainer`
@@ -54,7 +54,7 @@ Frames over 256 MiB are treated as corruption (`src/ivf.rs:47`). `flush`
 rewinds.
 
 **Container.** rivet's streaming demuxer is boxed in the source; each `run()`
-asks it for `next_video_sample()` (`src/decoder.rs:676-689`). A damaged sample
+asks it for `next_video_sample()` (`src/decoder.rs:660-673`). A damaged sample
 is reported as an error and counted, and the demuxer is assumed to continue.
 Time base is `(1, timescale)`. Containers are forward-only: `flush` drops the
 source and the caller must set it again.
@@ -63,8 +63,8 @@ source and the caller must set it again.
 demuxes the pair as one file, so the decoder is never reset between segments.
 After an init segment (or a flush), the first sample pushed gets the `av1C`
 configOBUs prepended unless it already carries a sequence header
-(`src/decoder.rs:406-417`, helpers `av1c_config_obus` at `822` and
-`tu_has_sequence_header` at `844`). That is what makes a rendition switch
+(`src/decoder.rs:394-405`, helpers `av1c_config_obus` at `802` and
+`tu_has_sequence_header` at `824`). That is what makes a rendition switch
 decode without a flush when the encoder does not repeat the sequence header
 in every keyframe.
 
@@ -98,9 +98,9 @@ sequenceDiagram
 - `setInitSegment` and `pushSegment` switch to push mode **keeping** queued and
   decoded frames if already in push mode; from IVF/container mode they reset.
 - `pushSegment` that fails half way leaves the samples before the error
-  queued, and does not update `lastSegment*Pts` (`src/decoder.rs:421-428`).
+  queued, and does not update `lastSegment*Pts` (`src/decoder.rs:409-416`).
 - The `av1C` lookup scans for the fourcc rather than walking boxes
-  (`src/decoder.rs:823-825`); fine for an init segment, not general.
+  (`src/decoder.rs:803-805`); fine for an init segment, not general.
 - Without the `container` feature, the container and segment entry points
   throw and IVF / raw temporal units still work (`src/wasm.rs:146-201`).
 - An IVF handed to `setSourceContainer` was refused before rivet `2100c31`

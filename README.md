@@ -24,6 +24,15 @@ threads on wasm through an embedder spawner — see
 committed so a git dependency (`github:safewords/wasm-av1#sha`) carries it;
 `scripts/build.sh` regenerates it.
 
+**A second decoder core, off by default.** The crate also builds on
+[rivet]'s own AV1 decoder, `rivet-av1`, in place of rav1d (Cargo feature
+`rivet-av1`). It decodes every fixture here to the same MD5, in all four
+variants, and is about half as fast as rav1d in wasm; two things this
+README promises need rivet-av1 changes that are written but not upstream.
+Nothing that is built by CI, committed in `pkg/` or published uses it.
+[docs/rivet-av1.md](docs/rivet-av1.md) has what it is, what is missing and
+every number.
+
 **Feature docs:** [`docs/features/README.md`](docs/features/README.md) — each
 component as the code has it, with `path:line` references, and the known
 defects.
@@ -113,7 +122,9 @@ scripts/build.sh                                    # → pkg/{baseline,simd,thr
 
 `FEATURES=bitdepth_8 scripts/build.sh` drops 10/12-bit support for a smaller
 decoder; `FEATURES=bitdepth_8,bitdepth_16 scripts/build.sh` drops the container
-demuxers.
+demuxers. `FEATURES=rivet-av1,container scripts/build.sh` builds on rivet-av1
+instead of rav1d ([docs/rivet-av1.md](docs/rivet-av1.md); not what `pkg/`
+holds).
 
 ## Testing — what runs, and what it proves
 
@@ -162,16 +173,18 @@ in [docs/performance.md](docs/performance.md).
 
 ```
 src/ivf.rs        IVF reader (upstream init_avx / blob-api.c)
-src/decoder.rs    run/next_frame/finished ring around rav1d (upstream AVX_Decoder_*), IVF / container / push sources
+src/decoder.rs    run/next_frame/finished ring around the decoder core (upstream AVX_Decoder_*), IVF / container / push sources
+src/core_rav1d.rs the core: rav1d behind five calls (open, flush, send, send_pending, picture)
+src/core_rivet.rs the other core, feature `rivet-av1`: rivet-av1 behind the same five
 src/frame.rs      packed planes + geometry + colour metadata (upstream buffer_frame)
 src/convert.rs    YUV→RGBA: scalar (any layout/depth) + wasm simd128 (8-bit 4:2:0), bit-identical
 src/wasm.rs       the wasm-bindgen surface (upstream EXPORTED_FUNCTIONS)
-src/threads.rs    the thread spawner for the threads builds (rav1d thread body → Worker)
+src/threads.rs    the thread spawner for the threads builds (rav1d thread body → Worker; rivet-av1: a pool of them)
 js/               loader, detect, decoder, render, worker, player, hls, thread-worker
 examples/decode_ivf.rs   native CLI (upstream test.c) — MD5, frame dumps, PPM, timings
 tests/, test/     native and Node tests;  test/browser.mjs the Playwright matrix (Chromium, Firefox, WebKit)
 scripts/          build.sh, bench.mjs (Node), bench-browser.mjs (threads, in the browsers), serve.mjs
-docs/             rav1d.md, rivet.md, performance.md, integration.md
+docs/             rav1d.md, rivet.md, rivet-av1.md, performance.md, integration.md
 ```
 
 Licence: Apache-2.0 (as upstream). See NOTICE for what is linked and under what.

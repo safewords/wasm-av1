@@ -3,7 +3,7 @@
 > **Status:** STABLE
 > **Owners (code):** `src/frame.rs`, `src/convert.rs`, `src/wasm.rs` (frame and RGBA sections), `js/decoder.js` (`Frame`, `krKbFor`), `js/render.js`
 > **Related docs:** [decoder-core.md](./decoder-core.md), [js-api-and-worker.md](./js-api-and-worker.md), [`../performance.md`](../performance.md)
-> **Last verified against code:** 2026-11-06 @ `07e0968`
+> **Last verified against code:** 2026-11-12 @ `4386183`
 
 ## Overview
 
@@ -18,17 +18,19 @@ agree on colour.
 
 ### Data model
 
-`Frame` (`src/frame.rs:120-138`): `width`, `height`, `bit_depth` (8/10/12),
+`Frame` (`src/frame.rs:107-125`): `width`, `height`, `bit_depth` (8/10/12),
 `bytes_per_sample` (1, or 2 little-endian for 10/12-bit), `layout`
 (`I400`/`I420`/`I422`/`I444`), `planes: [PlaneInfo; 3]` (`offset`, `stride`,
 `width`, `height`), `pts`, `color` (`matrix`, `primaries`, `transfer`,
-`full_range`, defaults "unspecified", `src/frame.rs:98-118`), and `data`.
+`full_range`, defaults "unspecified", `src/frame.rs:85-105`), and `data`.
 
 The packed layout is Y then U then V, no padding (`Frame::geometry`,
-`src/frame.rs:142-171`), which is exactly what WebCodecs' `I420` expects.
-`from_picture` copies row by row from rav1d's padded strides
-(`src/frame.rs:174-225`); that copy is the price of a frame that survives the
-next decode call.
+`src/frame.rs:129-158`), which is exactly what WebCodecs' `I420` expects.
+`Frame::from_picture` copies row by row from rav1d's padded strides
+(`src/core_rav1d.rs:96-150`); that copy is the price of a frame that survives
+the next decode call. (A `rivet-av1` build has no such copy: rivet-av1 hands
+back a frame already packed this way and `src/core_rivet.rs:108-135` takes
+its buffer.)
 
 ### Interfaces
 

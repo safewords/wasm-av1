@@ -1,9 +1,9 @@
 # wasm variants, detection and threading
 
-> **Status:** PARTIAL — the four variants work and are tested in three engines; rav1d's thread Workers are never torn down.
+> **Status:** PARTIAL — the four variants work and are tested in three engines; the decoder's thread Workers are never torn down.
 > **Owners (code):** `js/detect.js`, `js/loader.js`, `src/threads.rs`, `js/thread-worker.js`, `scripts/build.sh`, `Cargo.toml`
-> **Related docs:** [js-api-and-worker.md](./js-api-and-worker.md), [build-and-release.md](./build-and-release.md), [`../rav1d.md`](../rav1d.md), [`../performance.md`](../performance.md), [`../integration.md`](../integration.md)
-> **Last verified against code:** 2026-11-06 @ `07e0968`
+> **Related docs:** [js-api-and-worker.md](./js-api-and-worker.md), [build-and-release.md](./build-and-release.md), [`../rav1d.md`](../rav1d.md), [`../rivet-av1.md`](../rivet-av1.md), [`../performance.md`](../performance.md), [`../integration.md`](../integration.md)
+> **Last verified against code:** 2026-11-12 @ `4386183`
 
 ## Overview
 
@@ -15,7 +15,7 @@ rav1d's frame and tile worker threads as Web Workers sharing one
 and the decoder itself in a Worker, because rav1d blocks its calling thread
 on `memory.atomic.wait`.
 
-| Variant | Rust flags (`scripts/build.sh:92-99`) | Engines |
+| Variant | Rust flags (`scripts/build.sh:100-107`) | Engines |
 |---|---|---|
 | `baseline` | rustc's default wasm32 features | Chrome 96, Firefox 89, Safari 15 |
 | `simd` | `+simd128` | Chrome 91, Firefox 89, Safari 16.4 |
@@ -33,7 +33,7 @@ on `memory.atomic.wait`.
 | JS | `loadWasmAv1({variant, threads, baseUrl, fetch})` | Imports `pkg/<variant>/wasm_av1.js` by URL; one cached runtime per `variant@baseUrl` (`js/loader.js:85-126`) |
 | JS | `spawnThreadWorker(msg)`, `THREAD_STACK_SIZE` (2 MiB) | `js/loader.js:30`, `59-64` |
 | Global | `globalThis.__wasmAv1SpawnThread(module, memory, ptr)` | Installed by the loader in whichever context instantiated a threads build (`js/loader.js:35-51`) |
-| wasm export | `__wasm_av1_thread_entry(ptr)` | Runs one thread body (`src/threads.rs:63-69`) |
+| wasm export | `__wasm_av1_thread_entry(ptr)` | Runs one thread body (`src/threads.rs:70-76`) |
 
 ### Flow: a thread starting
 
@@ -64,10 +64,27 @@ the loader spawns the Worker itself (`js/loader.js:45-46`).
 
 rav1d's side is the fork's embedder spawner
 (`rav1d::wasm_thread::set_thread_spawner`, registered once by
-`src/threads.rs:54-59`); `parking_lot_core`'s `nightly` feature supplies the
-real wasm parker (`Cargo.toml:34-39`). Thread count: `Av1Player` resolves
+`src/threads.rs:79-85`); `parking_lot_core`'s `nightly` feature supplies the
+real wasm parker (`Cargo.toml:46-52`). Thread count: `Av1Player` resolves
 `threads: 'auto'` to `hardwareConcurrency` capped at 8
 (`js/player.js:17-24`); rav1d picks its frame-thread count from that.
+
+**With the rivet-av1 core** the same Workers, the same spawn request and the
+same `thread-worker.js` carry a different thing. rivet-av1 has no long-lived
+threads: it starts scoped threads for each parallel job (the tiles of a
+frame, the bands of a post-filter) and joins them. A Worker cannot be
+started per job, so `src/threads.rs:99-231` keeps a pool: `install(threads)`
+asks for `threads - 1` Workers once per instance, each runs
+`Pool::worker` forever, and the pool is the `av1::parallel::Runner`
+rivet-av1 hands each job to. The decoding thread takes part in every job
+and a job is a loop over a shared queue, so a Worker that has not come up
+yet is not waited for. The pool outlives every decoder, so a flush (a new
+`av1::Decoder`) does not respawn anything. This needs the `rivet-av1-pending`
+feature (the runner hook is not in rivet `develop` yet); a plain `rivet-av1`
+build reports `threadsSupported() == false` in every variant and decodes on
+one thread (`src/lib.rs:70-76`). rivet-av1 threads tiles and post-filters
+only, not frames, so it gains much less from threads than rav1d does:
+[`../rivet-av1.md`](../rivet-av1.md) has the numbers.
 
 ### Configuration
 
@@ -101,6 +118,8 @@ real wasm parker (`Cargo.toml:34-39`). Thread count: `Av1Player` resolves
 
 - [`../rav1d.md`](../rav1d.md): the fork's `e051d04` (embedder-spawned
   threads, condvar handshake) and `55c4d09` (SIMD128 kernels).
+- [`../rivet-av1.md`](../rivet-av1.md): the second core and its thread pool,
+  2026-11-12.
 - [`../performance.md`](../performance.md): 1080p from 16 ms to 3 ms a frame
   on 8 threads in Chromium, bit-exact.
 

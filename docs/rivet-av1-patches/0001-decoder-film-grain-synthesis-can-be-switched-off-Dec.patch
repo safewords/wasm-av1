@@ -1,0 +1,118 @@
+From baeb7e855bc19d75cee1ef41573c73187ac94aa9 Mon Sep 17 00:00:00 2001
+From: Ely Erin Haughie <ely@elyc.in>
+Date: Thu, 12 Nov 2026 16:25:02 -0800
+Subject: [PATCH 1/3] decoder: film grain synthesis can be switched off
+ (Decoder::set_apply_grain): frames come out as decoded, for a player without
+ the budget for grain
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ README.md                  |  2 ++
+ src/decoder/mod.rs         | 15 ++++++++++++++-
+ tests/committed_vectors.rs | 33 +++++++++++++++++++++++++++++++++
+ 3 files changed, 49 insertions(+), 1 deletion(-)
+
+diff --git a/README.md b/README.md
+index 146d614..dccf912 100644
+--- a/README.md
++++ b/README.md
+@@ -58,6 +58,8 @@ layers that is the last (highest) one, as the specification's output
+ process recommends, and `Decoder::decode_all` returns every one.
+ `Decoder::decode_annexb` takes an Annex B temporal unit
+ (`annexb_temporal_units` splits a stream into them).
++`Decoder::set_apply_grain(false)` leaves film grain synthesis out: frames
++come out as decoded, for a player that cannot afford the grain.
+ 
+ Not there yet:
+ 
+diff --git a/src/decoder/mod.rs b/src/decoder/mod.rs
+index 184b5cd..863d40d 100644
+--- a/src/decoder/mod.rs
++++ b/src/decoder/mod.rs
+@@ -284,6 +284,8 @@ pub struct Decoder {
+     hdr: HdrMetadata,
+     /// Worker threads for tiles and the post-filters (1: none).
+     threads: usize,
++    /// Whether output frames get the film grain their stream asks for.
++    apply_grain: bool,
+ }
+ 
+ impl Default for Decoder {
+@@ -307,6 +309,7 @@ impl Decoder {
+             max_pixels: 1 << 26,
+             hdr: HdrMetadata::default(),
+             threads: 1,
++            apply_grain: true,
+         }
+     }
+ 
+@@ -328,6 +331,16 @@ impl Decoder {
+         };
+     }
+ 
++    /// Whether the output process synthesises film grain (7.18.3) on the
++    /// frames of a stream that carries grain parameters. On by default, as
++    /// the specification has it; off, a frame comes out as it was decoded
++    /// (the reference frames, which never carry grain, are the same either
++    /// way), which costs less and is what a player without the budget for
++    /// grain shows.
++    pub fn set_apply_grain(&mut self, apply: bool) {
++        self.apply_grain = apply;
++    }
++
+     /// Makes the decoder report a tile whose arithmetic-coded data does not
+     /// end with the padding `exit_symbol()` requires as a bitstream error.
+     /// A conformance check; off by default.
+@@ -862,7 +875,7 @@ impl Decoder {
+         frame.render_height = data.render_height;
+         frame.color = color_info(&seq.color);
+         frame.hdr = self.hdr;
+-        let grain_on = seq.film_grain_params_present && grain.apply_grain;
++        let grain_on = self.apply_grain && seq.film_grain_params_present && grain.apply_grain;
+         let mut planes: Vec<Vec<u16>> = Vec::new();
+         if grain_on {
+             for (p, pl) in data.frame.planes.iter().enumerate() {
+diff --git a/tests/committed_vectors.rs b/tests/committed_vectors.rs
+index 6b96c4b..054ba12 100644
+--- a/tests/committed_vectors.rs
++++ b/tests/committed_vectors.rs
+@@ -21,3 +21,36 @@ fn committed_vectors() {
+     }
+     assert!(failed.is_empty());
+ }
++
++/// Film grain synthesis can be switched off: the grain vectors then come
++/// out as decoded (not what their MD5s hash), frame for frame; a stream
++/// without grain parameters is not affected.
++#[test]
++fn film_grain_can_be_switched_off() {
++    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
++    let decode = |name: &str, grain: bool| -> Vec<String> {
++        let mut dec = av1::Decoder::new();
++        dec.set_apply_grain(grain);
++        common::packets(&dir.join(name))
++            .iter()
++            .filter_map(|p| dec.decode(p).unwrap())
++            .map(|f| common::frame_md5(&f))
++            .collect()
++    };
++    for name in [
++        "av1-1-b8-23-film_grain-50.ivf",
++        "av1-1-b10-23-film_grain-50.ivf",
++    ] {
++        let expected = common::expected_md5s(&dir.join(name));
++        let with = decode(name, true);
++        let without = decode(name, false);
++        assert_eq!(with, expected, "{name}: grain on is the reference");
++        assert_eq!(without.len(), with.len(), "{name}");
++        assert!(
++            without.iter().zip(&with).all(|(a, b)| a != b),
++            "{name}: every frame carries grain"
++        );
++    }
++    let plain = "av1-1-b8-05-mv.ivf";
++    assert_eq!(decode(plain, false), decode(plain, true));
++}
+-- 
+2.54.0 (Apple Git-157)
+

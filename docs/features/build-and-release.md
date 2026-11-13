@@ -2,8 +2,8 @@
 
 > **Status:** PARTIAL — CI and release work; the committed `pkg/` trails `main`.
 > **Owners (code):** `scripts/build.sh`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `package.json`, `Cargo.toml`, `rust-toolchain.toml`, `tests/`, `test/`, `scripts/`
-> **Related docs:** [variants-and-threading.md](./variants-and-threading.md), [`../performance.md`](../performance.md)
-> **Last verified against code:** 2026-11-06 @ `07e0968`
+> **Related docs:** [variants-and-threading.md](./variants-and-threading.md), [`../performance.md`](../performance.md), [`../rivet-av1.md`](../rivet-av1.md)
+> **Last verified against code:** 2026-11-12 @ `4386183`
 
 ## Overview
 
@@ -28,7 +28,7 @@ flowchart LR
 
 | Kind | Name | Notes |
 |---|---|---|
-| Script | `scripts/build.sh [--dev]` | `FEATURES=…` (e.g. `bitdepth_8`), `VARIANTS="simd simd-threads"`; checks wasm-bindgen-cli equals the `Cargo.lock` version (`scripts/build.sh:42-48`); writes `pkg/manifest.json` with sizes and the rav1d revision (`109-125`) |
+| Script | `scripts/build.sh [--dev]` | `FEATURES=…` (e.g. `bitdepth_8`, or `rivet-av1,container` for the other decoder core), `VARIANTS="simd simd-threads"`; checks wasm-bindgen-cli equals the `Cargo.lock` version (`scripts/build.sh:50-56`); writes `pkg/manifest.json` with sizes, the decoder core (`rav1d` or `rivet-av1`, from `FEATURES`, `44-47`), the rav1d revision when that is the core, and the rivet revision (`117-134`) |
 | npm | `build`, `test`, `test:node`, `test:browser`, `bench`, `bench:browser`, `serve` | `package.json:53-61` |
 | Workflow | `ci.yml` | `push` to `main`, `workflow_dispatch` (`.github/workflows/ci.yml:12-20`); `docs/**` and `**/*.md` are paths-ignored since `bad92a8`, so a docs-only push runs nothing |
 | Workflow | `release.yml` | `push` of `v*` tags, or `workflow_dispatch` with a tag (`.github/workflows/release.yml:25-32`) |
@@ -37,13 +37,14 @@ flowchart LR
 Toolchain: Rust `1.100.0` with `rust-src` (`rust-toolchain.toml`),
 wasm-bindgen-cli `0.2.130`, binaryen `version_123`, Node 22, mold for native
 links (`ci.yml:21-33`). The threads variants rebuild std with
-`-Zbuild-std` under `RUSTC_BOOTSTRAP=1` (`scripts/build.sh:60-67`).
+`-Zbuild-std` under `RUSTC_BOOTSTRAP=1` (`scripts/build.sh:68-75`).
 
 ### Flow: tests
 
 | Command | Proves |
 |---|---|
 | `cargo test --release` (also without `container`) | Every fixture decodes to the libdav1d/libaom MD5, single and threaded; push ≡ IVF; MP4/fMP4/WebM ≡ IVF; CMAF segments and rendition switches (`tests/decode.rs`, `tests/container.rs`) |
+| `cargo test --release --no-default-features --features rivet-av1,container` (not in CI) | The same tests with the rivet-av1 core; the film grain switch test is replaced by one that expects `apply_grain: false` to be refused. With `rivet-av1-pending` and a rivet-av1 checkout ([`../rivet-av1.md`](../rivet-av1.md)) the whole suite as rav1d runs it |
 | `cargo test --target wasm32-unknown-unknown --test wasm_convert` (± simd128) | RGBA dispatch equals scalar on 55 combinations inside wasm |
 | `node --test test/decode.test.mjs` | The built `.wasm`, every variant: same MD5s, SIMD and baseline RGBA byte-identical, container and segment paths, rung switch through the JS `Decoder` |
 | `node test/browser.mjs` (Playwright, not in CI) | Chromium, Firefox, WebKit × variants × renderers × thread/Worker × formats, on a cross-origin-isolated page |
@@ -63,18 +64,29 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
 ### Edge cases & gotchas
 
 - **The committed `pkg/` trails `main`.** It was last rebuilt in `527e95a`
-  (0.2.2). Since then `07e0968` moved rivet to `2100c31`; `pkg/manifest.json`
-  records the rav1d revision but not rivet's. Consumers of the release tarball
+  (0.2.2). Since then `07e0968` moved rivet to `2100c31`, and the committed
+  `pkg/manifest.json` predates the `core` and `rivet` entries `build.sh` now
+  writes (it has only `rav1d`). Consumers of the release tarball
   are unaffected (release.yml builds the tag itself); consumers of
   `github:safewords/wasm-av1#main` get 0.2.2 wasm with newer JS.
 - CI's "does the committed `pkg/` match" step is a warning only: a Windows
   build and a Linux build differ in the paths embedded in panic strings
   (`ci.yml:98-104`).
 - `scripts/build.sh` does not run on a stock macOS (run 2026-11-12): BSD sed
-  rejects the `{n;s/…/p}` expressions (`scripts/build.sh:42`, `:112`) and the
+  rejects the `{n;s/…/p}` expressions (`scripts/build.sh:48`, `:50`) and the
   script exits there; `/bin/bash` 3.2 then refuses the empty arrays under
-  `set -u` (`:67`); and `:120` (with `release.yml:112`) uses GNU
-  `stat -c %s`. CI runs it on Linux, where all three are fine.
+  `set -u` (`:75`); and `:130` (with `release.yml:112`) uses GNU
+  `stat -c %s`. CI runs it on Linux, where all three are fine. It does run
+  there unmodified as `zsh --emulate ksh scripts/build.sh` (zsh accepts the
+  empty arrays and, emulating ksh, splits `$VARIANTS` as sh does) with two
+  shims first on `PATH`: a `sed` that rewrites `p}` to `p;}` before calling
+  `/usr/bin/sed`, and a `stat` that calls coreutils' `gstat`. All four
+  variants were built that way on 2026-11-12, for both decoder cores.
+- **Without `wasm-opt` the `.wasm` is about twice the size.** `build.sh`
+  says "~15% smaller"; measured on 2026-11-12, the baseline variant is
+  3 499 115 bytes without binaryen against the 1 700 331 CI ships (the
+  README's size table is CI's). Compare sizes only between builds made the
+  same way.
 - The threads variants pass `-C target-feature=+atomics`, which is not a
   stable target feature. rustc has always warned; from 1.100.0 the warning
   adds that it "will become a hard error in a future release"
@@ -82,7 +94,7 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
   `RUSTC_BOOTSTRAP=1`; read that issue before the next toolchain bump.
 - Nothing reaches into Cargo's build directory. `build.sh` reads only the
   final `target/wasm-<variant>/wasm32-unknown-unknown/<profile>/wasm_av1.wasm`
-  (`scripts/build.sh:68`), which Cargo 1.100's new layout for intermediate
+  (`scripts/build.sh:76`), which Cargo 1.100's new layout for intermediate
   artifacts did not move.
 - `.cargo/config.toml` sets a 7-day dependency cooldown
   (`global-min-publish-age`): `cargo update` and `cargo add` skip crates.io
@@ -98,6 +110,9 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
   dependency cooldown. No source change was needed.
 - `bb53c54`: Rust 1.99.1 and mold for the native side.
 - `ec0e315`: dependencies within semver, wasm-bindgen 0.2.130.
+- 2026-11-12: the `rivet-av1` and `rivet-av1-pending` features; `build.sh`
+  records the decoder core and the rivet revision in the manifest. CI and
+  `release.yml` still build and test the default (rav1d) only.
 - The repository README's "Testing" and "Performance" sections, and
   [`../performance.md`](../performance.md).
 
@@ -105,6 +120,5 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
 
 | Idea | Motivation | Sketch | Status |
 |---|---|---|---|
-| Record rivet in the manifest | Know which demuxer a `pkg/` holds | Add `"rivet-container"` beside `"rav1d"` in `build.sh` | Proposed |
 | Portable `build.sh` | Builds on macOS | `wc -c < file` for `stat`; `p;}` in the sed expressions; `${arr[@]+"${arr[@]}"}` for the empty arrays | Proposed |
 | Rebuild `pkg/` with each dependency bump | `main` consumers get what the source says | CI artifact committed by the release prep, or stop committing `pkg/` | Proposed |

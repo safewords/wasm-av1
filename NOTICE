@@ -12,5 +12,9 @@ It links, but does not include, the following at build time:
                    (via https://github.com/safewords/rav1d, branch main — see docs/rav1d.md)
   rivet-container  https://github.com/rivet-transcoder/rivet   Open Encoding Attribution License 1.0
                    (optional, feature `container`; branch develop — see docs/rivet.md)
+  rivet-av1        https://github.com/rivet-transcoder/rivet   Open Encoding Attribution License 1.0
+                   (optional and off by default, feature `rivet-av1`, in place of rav1d;
+                   crates/av1 of branch develop, itself https://github.com/safewords/rivet-av1
+                   — see docs/rivet-av1.md)
 Their licence texts ship with their sources; a distribution that bundles a
 built .wasm carries their notices as their licences require.

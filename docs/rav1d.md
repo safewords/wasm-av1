@@ -1,5 +1,10 @@
 # rav1d: why a fork, and what is on it
 
+rav1d is the decoder core of every build CI makes and of the committed
+`pkg/`. Since 2026-11-12 there is a second core behind the non-default
+`rivet-av1` feature, rivet's own AV1 decoder; [rivet-av1.md](rivet-av1.md)
+is its counterpart to this file, and says why rav1d is still the default.
+
 The decoder is [memorysafety/rav1d](https://github.com/memorysafety/rav1d), the
 Rust port of dav1d (BSD-2-Clause). We take it from
 **`https://github.com/safewords/rav1d`, branch `main`**, which is upstream

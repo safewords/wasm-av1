@@ -10,8 +10,24 @@ A release is a `v*` tag matching the version in `package.json` and
 
 ## [Unreleased]
 
+### Added
+
+- A second decoder core behind the Cargo feature `rivet-av1`, off by
+  default: rivet's own AV1 decoder in place of rav1d. It decodes every
+  fixture to the same MD5 in all four variants and is about half as fast in
+  wasm. As rivet has it today it cannot decode without film grain and runs
+  the threads variants on one thread; `rivet-av1-pending` adds both against
+  a rivet-av1 branch that is not upstream yet. The published package and the
+  committed `pkg/` are rav1d, as before. See `docs/rivet-av1.md`.
+- `pkg/manifest.json` records the decoder core (`core`) and the rivet
+  revision (`rivet`); `rav1d` is present when rav1d is the core.
+
 ### Changed
 
+- rav1d is an optional dependency that `bitdepth_8` and `bitdepth_16` switch
+  on. Every feature selection that built before builds the same decoder;
+  a build with neither now fails with a message naming the features instead
+  of inside rav1d.
 - IVF handed to `setSourceContainer` decodes, now that rivet reads IVF as a
   container; it had been refused.
 - Built with Rust 1.100.0; the native side links with mold.

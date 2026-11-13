@@ -70,6 +70,15 @@ cargo features on `rivet-container` for per-format demuxers and for audio
 extraction, and constructing the MP4 reader once. Until then, builds that do
 not need containers use `FEATURES=bitdepth_8,bitdepth_16 scripts/build.sh`.
 
+## rivet's AV1 decoder
+
+rivet has an AV1 decoder of its own, `rivet-av1` (`crates/av1`, a submodule:
+`safewords/rivet-av1`). wasm-av1 can be built on it instead of rav1d with
+the non-default `rivet-av1` feature — the same git dependency on rivet
+`develop`, a second package of it. It needed changes in rivet-av1 as
+`rivet-container` once needed the one above, and they are not upstream yet:
+[rivet-av1.md](rivet-av1.md).
+
 ## Licence note
 
 rivet is under the Open Encoding Attribution License 1.0 (source-available,

@@ -1,0 +1,199 @@
+From 3c2c5496428d0cfd019c75e2d6968b7467fe7523 Mon Sep 17 00:00:00 2001
+From: Ely Erin Haughie <ely@elyc.in>
+Date: Thu, 12 Nov 2026 16:27:44 -0800
+Subject: [PATCH 3/3] wasm32: a SIMD128 version of the CDEF block filter and
+ the inverse transforms' vector lanes in a module built with simd128; README:
+ building for wasm32-unknown-unknown, and where its threads come from
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ README.md       | 11 ++++++++
+ src/dsp/cdef.rs | 73 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ src/dsp/itx.rs  | 23 +++++++++++++++-
+ src/dsp/mod.rs  |  5 +++-
+ 4 files changed, 109 insertions(+), 3 deletions(-)
+
+diff --git a/README.md b/README.md
+index dccf912..47b63bf 100644
+--- a/README.md
++++ b/README.md
+@@ -91,6 +91,17 @@ inverse transforms (eight rows or columns at a time; the 64-bit scalar
+ transforms remain for 12-bit and lossless) and the loop filter (the four
+ samples along an edge at once). `AV1_NO_SIMD=1` turns them off.
+ 
++On `wasm32-unknown-unknown` the crate builds as it is. A module built with
++the `simd128` target feature takes a SIMD128 version of the CDEF block
++filter and the vector lanes of the inverse transforms (the loop filter and
++the interpolation filters are loops the compiler vectorises there). There
++is no `std::thread::spawn` on that target — a thread is another instance of
++the module on shared memory, which only the page can create — so an
++embedder that has threads registers them once with
++`av1::parallel::set_runner` (a [`Runner`](src/parallel.rs): typically a
++pool of Workers it keeps), and the decoder runs its tiles and post-filter
++bands through it instead of starting scoped threads.
++
+ Throughput (`examples/av1_decbench.rs`, best of three, on the machine this was
+ written on — an AMD Ryzen 9 9950X), on 30-frame streams of camera
+ footage from this crate's encoder at quantiser 100, one tile column or four:
+diff --git a/src/dsp/cdef.rs b/src/dsp/cdef.rs
+index 23d04e0..c6a2fe0 100644
+--- a/src/dsp/cdef.rs
++++ b/src/dsp/cdef.rs
+@@ -1,5 +1,7 @@
+ //! The CDEF filter of one block (7.15.3), on a bordered window of the
+-//! deblocked samples: scalar, and AVX2 / NEON versions chosen at run time,
++//! deblocked samples: scalar, AVX2 / NEON versions chosen at run time, and
++//! a WebAssembly SIMD128 version where the module is built with `simd128`
++//! (a wasm module has its features or it does not load: nothing to detect),
+ //! all bit-exact.
+ 
+ /// A window sample outside the frame (`CdefAvailable` is 0): not a tap.
+@@ -40,6 +42,12 @@ pub(crate) fn filter(win: &[i32; WS * WS], w: usize, h: usize, t: &Taps, res: &m
+         #[allow(clippy::needless_return)]
+         return;
+     }
++    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
++    {
++        filter_simd128(win, w, h, t, res);
++        #[allow(clippy::needless_return)]
++        return;
++    }
+     #[allow(unreachable_code)]
+     filter_scalar(win, w, h, t, res)
+ }
+@@ -241,6 +249,69 @@ unsafe fn filter_neon(win: &[i32; WS * WS], w: usize, h: usize, t: &Taps, res: &
+     }
+ }
+ 
++/// Four samples of a row at a time in a `v128`, the NEON version's
++/// arithmetic: 32-bit lanes, an unavailable tap's contribution selected
++/// away after it is computed.
++#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
++fn filter_simd128(win: &[i32; WS * WS], w: usize, h: usize, t: &Taps, res: &mut [u16; 64]) {
++    use std::arch::wasm32::*;
++    if w != 8 && w != 4 {
++        return filter_scalar(win, w, h, t, res);
++    }
++    let p = win.as_ptr();
++    let na = i32x4_splat(NA);
++    let zero = i32x4_splat(0);
++    let pri_str = i32x4_splat(t.pri_str);
++    let sec_str = i32x4_splat(t.sec_str);
++    let (pri_adj, sec_adj) = (t.pri_adj as u32, t.sec_adj as u32);
++    for i in 0..h {
++        for half in 0..w / 4 {
++            let base = ((i + 2) * WS + 2 + half * 4) as isize;
++            // SAFETY (all loads): four samples inside the 12x12 window (a
++            // block row starts at column 2, a tap is at most two rows and
++            // two columns away).
++            let x = unsafe { v128_load(p.offset(base) as *const v128) };
++            let mut sum = zero;
++            let mut mx = x;
++            let mut mn = x;
++            let mut tap = |off: isize, strv: v128, adj: u32, k: i32| {
++                let v = unsafe { v128_load(p.offset(base + off) as *const v128) };
++                let invalid = i32x4_eq(v, na);
++                let d = i32x4_sub(v, x);
++                let ad = i32x4_abs(d);
++                let lim = i32x4_max(i32x4_sub(strv, u32x4_shr(ad, adj)), zero);
++                let mag = i32x4_min(ad, lim);
++                let c = v128_bitselect(i32x4_neg(mag), mag, i32x4_lt(d, zero));
++                let c = v128_andnot(c, invalid);
++                sum = i32x4_add(sum, i32x4_mul(c, i32x4_splat(k)));
++                // NA is the least i32: it never raises the maximum.
++                mx = i32x4_max(mx, v);
++                mn = i32x4_min(mn, v128_bitselect(x, v, invalid));
++            };
++            for k in 0..2 {
++                for sign in [-1isize, 1] {
++                    tap(sign * t.pri_off[k], pri_str, pri_adj, t.pri_taps[k]);
++                    for so in t.sec_off[k] {
++                        tap(sign * so, sec_str, sec_adj, t.sec_taps[k]);
++                    }
++                }
++            }
++            // x + ((8 + sum - (sum < 0)) >> 4): the comparison is -1 where
++            // it holds.
++            let r = i32x4_shr(
++                i32x4_add(i32x4_add(sum, i32x4_splat(8)), i32x4_lt(sum, zero)),
++                4,
++            );
++            let v = i32x4_max(i32x4_min(i32x4_add(x, r), mx), mn);
++            let packed = u16x8_narrow_i32x4(v, v);
++            // SAFETY: four samples of row i within the 64-sample result.
++            unsafe {
++                v128_store64_lane::<0>(packed, res.as_mut_ptr().add(i * w + half * 4) as *mut u64)
++            };
++        }
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/src/dsp/itx.rs b/src/dsp/itx.rs
+index 2d9b6f3..f1720aa 100644
+--- a/src/dsp/itx.rs
++++ b/src/dsp/itx.rs
+@@ -104,6 +104,14 @@ impl Lane for i32 {
+ /// depths up to 10 (`8 + BitDepth` bits: products of at most 2^17 * 2^13);
+ /// [`inverse_transform_2d`] uses it only there.
+ #[derive(Clone, Copy)]
++#[cfg_attr(
++    not(any(
++        target_arch = "x86_64",
++        target_arch = "aarch64",
++        all(target_arch = "wasm32", target_feature = "simd128")
++    )),
++    allow(dead_code)
++)]
+ pub(crate) struct Lanes(pub(crate) [i32; 8]);
+ 
+ impl Lane for Lanes {
+@@ -666,7 +674,12 @@ pub(crate) fn inverse_transform_2d(
+             unsafe { inverse_transform_2d_avx2(dequant, tx_sz, tx_type, bit_depth, residual) };
+             return;
+         }
+-        #[cfg(target_arch = "aarch64")]
++        // NEON is part of the aarch64 baseline, and a wasm module built
++        // with `simd128` has it: the lanes compile to vectors on both.
++        #[cfg(any(
++            target_arch = "aarch64",
++            all(target_arch = "wasm32", target_feature = "simd128")
++        ))]
+         {
+             inverse_transform_2d_lanes(dequant, tx_sz, tx_type, bit_depth, residual);
+             return;
+@@ -691,6 +704,14 @@ unsafe fn inverse_transform_2d_avx2(
+ /// (not lossless; bit depth 10 at most). Bit-exact with the scalar
+ /// version for the values conformance allows.
+ #[inline(always)]
++#[cfg_attr(
++    not(any(
++        target_arch = "x86_64",
++        target_arch = "aarch64",
++        all(target_arch = "wasm32", target_feature = "simd128")
++    )),
++    allow(dead_code)
++)]
+ fn inverse_transform_2d_lanes(
+     dequant: &[i32],
+     tx_sz: usize,
+diff --git a/src/dsp/mod.rs b/src/dsp/mod.rs
+index 87f3cd1..0b5f985 100644
+--- a/src/dsp/mod.rs
++++ b/src/dsp/mod.rs
+@@ -1,6 +1,9 @@
+ //! Signal processing kernels, with SIMD versions (AVX2 on x86-64, NEON on
+ //! aarch64) chosen at run time where they pay, each bit-exact with its
+-//! scalar version (and tested against it).
++//! scalar version (and tested against it). On wasm32 a module built with
++//! the `simd128` target feature takes the SIMD128 version of the CDEF
++//! filter and the vector lanes of the inverse transforms; the loop filter
++//! and the interpolation filters are loops the compiler vectorises there.
+ 
+ pub(crate) mod cdef;
+ pub(crate) mod enc;
+-- 
+2.54.0 (Apple Git-157)
+

@@ -27,7 +27,7 @@ rav1d kept as the baseline that work is measured against, are under
 [Performance](#performance) and in [docs/rivet-av1.md](docs/rivet-av1.md).
 
 **Nothing upstream is vendored.** rivet-av1 and rivet-container are git
-dependencies, two packages of rivet `develop` (`Cargo.lock` pins the
+dependencies, two packages of rivet `main` (`Cargo.lock` pins the
 revision; [docs/rivet-av1.md](docs/rivet-av1.md),
 [docs/rivet.md](docs/rivet.md)); upstream wasm-av1 checked all of libaom
 into `third_party/`. `pkg/` — the built `.wasm` + glue — is committed so a

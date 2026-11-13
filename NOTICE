@@ -15,7 +15,7 @@ builds (pkg/, the npm package, the release artefacts):
                    Copyright 2026 Ely Erin Fox
                    Open Encoding Attribution License, Version 1.0
                    The decoder core, in every build. Taken as crates/av1 of
-                   https://github.com/rivet-transcoder/rivet, branch develop
+                   https://github.com/rivet-transcoder/rivet, branch main
                    — see docs/rivet-av1.md. An original implementation written
                    from the AV1 Bitstream & Decoding Process Specification; it
                    does not derive from libaom, dav1d, rav1d or any other AV1

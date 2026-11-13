@@ -22,7 +22,7 @@ Node, and (as measured before rav1d was removed) in a browser.
 `rivet-av1` (imported as `av1`) is `crates/av1` of
 [rivet](https://github.com/rivet-transcoder/rivet), a git submodule there
 whose own repository is `https://github.com/safewords/rivet-av1`. This crate
-takes it from rivet `develop`, the same git source as `rivet-container`;
+takes it from rivet `main` (`develop` until 2026-11-13, when rivet's `main` was brought up to it), the same git source as `rivet-container`;
 `Cargo.lock` pins the rivet revision, and rivet pins the submodule: rivet
 `develop` at `b580fc6`, which has rivet-av1 at `3c2c549`, the first
 revision with everything 0.3.0 needs. Read from its

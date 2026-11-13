@@ -43,8 +43,8 @@ flowchart TB
     ivf[IVF reader<br/>src/ivf.rs]
     frame[Frame + YUV to RGBA<br/>src/frame.rs, src/convert.rs]
     threads[thread pool<br/>src/threads.rs]
-    rivetav1[(rivet-av1<br/>rivet develop)]
-    rivet[(rivet-container<br/>rivet develop)]
+    rivetav1[(rivet-av1<br/>rivet main)]
+    rivet[(rivet-container<br/>rivet main)]
   end
   tw[thread Workers<br/>pkg/thread-worker.js]
 

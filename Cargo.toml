@@ -16,18 +16,18 @@ crate-type = ["cdylib", "rlib"]
 # written from the specification — no C, no libc, one dependency. Open
 # Encoding Attribution License 1.0 (source-available; see NOTICE). It is
 # `crates/av1` of rivet, a submodule there whose own repository is
-# https://github.com/safewords/rivet-av1; taken from rivet `develop` like
+# https://github.com/safewords/rivet-av1; taken from rivet `main` like
 # rivet-container, so one git source carries both. Nothing of it is vendored
 # here; Cargo.lock pins the revision. docs/rivet-av1.md has what it does, what
 # this crate needs of it, and how fast it is.
-av1 = { git = "https://github.com/rivet-transcoder/rivet", branch = "develop", package = "rivet-av1" }
+av1 = { git = "https://github.com/rivet-transcoder/rivet", branch = "main", package = "rivet-av1" }
 # The demuxers: MP4/fMP4/CMAF, WebM/MKV, TS. rivet is the org's own transcoder;
 # its `rivet-container` crate hands us AV1 temporal units + pts straight out of
-# a container. rivet `develop` carries the commit that lets the crate build
+# a container. rivet `main` carries the commit that lets the crate build
 # without rivet-codec (see docs/rivet.md); Cargo.lock pins the revision.
 # Optional: without the `container` feature only IVF and raw temporal units are
 # accepted, and the .wasm is smaller.
-container = { git = "https://github.com/rivet-transcoder/rivet", branch = "develop", package = "rivet-container", default-features = false, optional = true }
+container = { git = "https://github.com/rivet-transcoder/rivet", branch = "main", package = "rivet-container", default-features = false, optional = true }
 bytes = { version = "1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -41,6 +41,8 @@ becomes that release when it is tagged.
 
 ### Changed
 
+- The two rivet packages come from rivet's `main` branch, which was brought
+  up to `develop` on 2026-11-13; the revision is the same one.
 - rivet-av1 moves to `f6f1ee1` (rivet `7647f35`), the first round of its
   speed work: one thread in wasm is 1.2 to 1.9 times faster than 0.3.0 first
   built, at 0.54 to 0.88 of rav1d on 8-bit video and level with or ahead of

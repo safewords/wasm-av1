@@ -44,7 +44,7 @@ feature; fails identically on `develop`). `--all-targets` additionally hits
 `crates/codec/tests/nvdec_smoke.rs` needing `--features nvidia` — also
 pre-existing.
 
-`Cargo.toml` here points at rivet `develop`; `Cargo.lock` pins the revision.
+`Cargo.toml` here points at rivet `main` (`develop` until 2026-11-13); `Cargo.lock` pins the revision.
 **Nothing of rivet is vendored here.**
 
 ## Segment-fed input (what HLS/CMAF needs)
@@ -79,7 +79,7 @@ nothing: no default features).
 
 rivet has an AV1 decoder of its own, `rivet-av1` (`crates/av1`, a submodule:
 `safewords/rivet-av1`). Since 0.3.0 it is this crate's decoder — the same
-git dependency on rivet `develop`, a second package of it, so one revision
+git dependency on rivet `main`, a second package of it, so one revision
 in `Cargo.lock` pins both and `cargo update -p rivet-av1` moves both. It
 needed changes in rivet-av1 as `rivet-container` once needed the one above;
 they are upstream: [rivet-av1.md](rivet-av1.md).

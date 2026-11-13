@@ -1,6 +1,6 @@
 # Build, tests and release
 
-> **Status:** PARTIAL — CI and release work; the committed `pkg/` trails `main`: it is still the rav1d build of 0.2.2.
+> **Status:** PARTIAL — CI and release work; the committed `pkg/` is replaced from CI's build by hand, so it can trail `main` by a commit.
 > **Owners (code):** `scripts/build.sh`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `package.json`, `Cargo.toml`, `rust-toolchain.toml`, `tests/`, `test/`, `scripts/`
 > **Related docs:** [variants-and-threading.md](./variants-and-threading.md), [`../performance.md`](../performance.md), [`../rivet-av1.md`](../rivet-av1.md)
 > **Last verified against code:** 2026-11-12 @ `162385f`
@@ -8,7 +8,10 @@
 ## Overview
 
 `scripts/build.sh` compiles the four variants and runs wasm-bindgen and
-wasm-opt into `pkg/`. CI proves the decoder on every push to `main`; a `v*`
+wasm-opt into `pkg/`; between the two, the threads variants go through
+`tools/wasm-copy-guard` (a native tool with its own `Cargo.lock`, built by
+the script), which works around a WebKit bug
+([variants-and-threading.md](./variants-and-threading.md)). CI proves the decoder on every push to `main`; a `v*`
 tag builds the tag, tests it, and publishes `@safewords/wasm-av1` to npm and
 to a GitHub Release. `pkg/` is committed so that a git dependency carries the
 wasm. Nothing here deploys a service.
@@ -46,6 +49,7 @@ links (`ci.yml:21-33`). The threads variants rebuild std with
 | `cargo test --release` (also `--no-default-features`, without `container`) | Every fixture decodes to the libdav1d/libaom MD5 on 1, 2 and 4 threads; film grain on and off; push ≡ IVF; MP4/fMP4/WebM ≡ IVF; CMAF segments and rendition switches (`tests/decode.rs`, `tests/container.rs`) |
 | `cargo test --target wasm32-unknown-unknown --test wasm_convert` (± simd128) | RGBA dispatch equals scalar on 55 combinations inside wasm |
 | `node --test test/decode.test.mjs` | The built `.wasm`, all four variants: same MD5s in baseline and SIMD, with `applyGrain` false too; the `threads` and `simd-threads` builds on 1, 2, 4 and 8 threads, each wasm thread a `worker_threads` Worker (`test/threads-node.mjs`, one process per run so a decoder left waiting fails instead of hanging); SIMD and baseline RGBA byte-identical; container and segment paths; rung switch through the JS `Decoder`. 20 tests |
+| `node --test test/copy-guard.test.mjs` (builds `tools/wasm-copy-guard` with cargo) | The pass the threads variants get: the instructions become calls, and both paths of its helpers (the instruction, and the load/store loops) behave as memmove/memset and still trap out of bounds |
 | `node test/browser.mjs` (Playwright, not in CI) | Chromium, Firefox, WebKit × variants × renderers × thread/Worker × formats, on a cross-origin-isolated page |
 
 `scripts/make-fixtures.sh` regenerates `testdata/` with ffmpeg; libdav1d and

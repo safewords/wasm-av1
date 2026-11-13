@@ -133,6 +133,43 @@ combos.push({ variant: 'auto', expectVariant: 'simd-threads', renderer: 'webgl',
 const argOnly = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
 const argBrowsers = process.argv.includes('--browsers') ? process.argv[process.argv.indexOf('--browsers') + 1].split(',') : null;
 mkdirSync(join(root, 'test', 'out'), { recursive: true });
+
+// The engine bug tools/wasm-copy-guard works around (docs/features/variants-and-threading.md):
+// after one Worker grows a shared memory, does memory.fill on the grown pages
+// trap in another Worker's instance? JavaScriptCore's did on 2026-11-12. Only
+// reported, not asserted: the threads combos below are what must pass, and an
+// engine that fixes it shows up here as "no".
+const probeModule = (() => {
+  const leb = (n) => { const o = []; do { let b = n & 0x7f; n >>>= 7; if (n) b |= 0x80; o.push(b); } while (n); return o; };
+  const str = (s) => [s.length, ...[...s].map((c) => c.charCodeAt(0))];
+  const sec = (id, b) => [id, ...leb(b.length), ...b];
+  const vec = (items) => [...leb(items.length), ...items.flat()];
+  const bodies = [[0x20, 0, 0x40, 0], [0x20, 0, 0x20, 1, 0x20, 2, 0xfc, 11, 0]] // grow(n) -> old; fill(dst, val, n)
+    .map((b) => { const f = [0, ...b, 0x0b]; return [...leb(f.length), ...f]; });
+  return [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    ...sec(1, vec([[0x60, 1, 0x7f, 1, 0x7f], [0x60, 3, 0x7f, 0x7f, 0x7f, 0]])),
+    ...sec(2, vec([[...str('env'), ...str('memory'), 2, 3, 1, ...leb(16384)]])),
+    ...sec(3, vec([[0], [1]])),
+    ...sec(7, vec([[...str('grow'), 0, 0], [...str('fill'), 0, 1]])),
+    ...sec(10, vec(bodies))];
+})();
+const probeStaleGrow = (page) => page.evaluate(async (bytes) => {
+  const src = `onmessage = ({ data }) => {
+    if (data.module) { self.x = new WebAssembly.Instance(data.module, { env: { memory: data.memory } }).exports; return postMessage('ready'); }
+    if (data.grow) return postMessage(self.x.grow(data.grow));
+    try { self.x.fill(data.fill, 1, 8); postMessage('ok'); } catch (e) { postMessage(String(e)); }
+  };`;
+  const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+  const call = (w, msg) => new Promise((r) => { w.onmessage = (e) => r(e.data); w.postMessage(msg); });
+  const module = await WebAssembly.compile(new Uint8Array(bytes));
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 16384, shared: true });
+  const a = new Worker(url), b = new Worker(url);
+  await call(a, { module, memory }); await call(b, { module, memory });
+  await call(a, { grow: 4 });
+  const r = await call(b, { fill: 4 * 65536 });
+  a.terminate(); b.terminate();
+  return r;
+}, probeModule);
 let failures = 0;
 for (const [name, launcher] of [['chromium', chromium], ['firefox', firefox], ['webkit', webkit]]) {
   if (argBrowsers && !argBrowsers.includes(name)) continue;
@@ -142,6 +179,13 @@ for (const [name, launcher] of [['chromium', chromium], ['firefox', firefox], ['
   } catch (e) {
     console.log(`${name}: not available (${e.message.split('\n')[0]})`);
     continue;
+  }
+  {
+    const page = await browser.newPage();
+    await page.goto(`${base}/demo/`);
+    const r = await probeStaleGrow(page).catch((e) => e.message.split('\n')[0]);
+    console.log(`${name}: memory.fill in one Worker on pages another Worker grew: ${r === 'ok' ? 'works' : `traps (${r}) — the engine bug wasm-copy-guard works around`}`);
+    await page.close();
   }
   for (const combo of combos) {
     const page = await browser.newPage();

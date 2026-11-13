@@ -130,6 +130,11 @@ scoop install binaryen   # or apt/brew — wasm-opt, optional (~15% smaller)
 scripts/build.sh                                    # → pkg/{baseline,simd,threads,simd-threads}, pkg/thread-worker.js, pkg/manifest.json
 ```
 
+The threads variants also go through `tools/wasm-copy-guard`, which the
+script builds with cargo: in WebKit, a Worker's `memory.copy` and
+`memory.fill` trap on shared memory that another Worker grew, and the pass
+routes them around that ([docs/features/variants-and-threading.md](docs/features/variants-and-threading.md)).
+
 `FEATURES= scripts/build.sh` (`FEATURES` set to nothing) builds without the
 default features, that is without the container demuxers: IVF and raw
 temporal units only, and under a quarter of the size. The crate has one Cargo
@@ -148,6 +153,7 @@ build, `git checkout -- pkg`. On macOS the script needs a GNU `sed` and
 | `cargo test --release` (and `--no-default-features`) | Native: IVF parser, geometry, colour conversion against a float reference; every fixture in `testdata/` decodes to **the same MD5 libdav1d and libaom produce** (8-bit, 10-bit, 4:4:4, mono, film grain, odd 177×99) on 1, 2 and 4 threads; film grain left out on request; push mode ≡ IVF mode; MP4/fMP4/WebM via rivet ≡ IVF. |
 | `cargo test --release --target wasm32-unknown-unknown --test wasm_convert` (± `RUSTFLAGS=-C target-feature=+simd128`) | Inside wasm, in Node: the RGBA dispatch equals the scalar path on 55 shape/matrix combinations — the SIMD build's v128 code included. |
 | `node --test test/decode.test.mjs` (after `scripts/build.sh`) | The built `.wasm`, all four variants, same MD5s through the wasm-bindgen surface (so the SIMD kernels are bit-exact too); the two threads builds on 1, 2, 4 and 8 threads, each wasm thread a `worker_threads` Worker on the shared memory; `applyGrain: false`; SIMD and baseline RGBA **byte-identical**; container path; CMAF segments pushed one by one; ms/frame. |
+| `node --test test/copy-guard.test.mjs` | `tools/wasm-copy-guard`, the post-link pass the threads builds get for WebKit: every `memory.copy`/`memory.fill` becomes a call, and both paths of its helpers behave as memmove/memset and still trap out of bounds. |
 | `node test/browser.mjs` (needs Playwright — `PLAYWRIGHT_DIR` or a local install) | Headless Chromium + Firefox + WebKit × {baseline, simd, threads, simd-threads} × {WebGL, 2D} × {main thread, Worker} × {IVF, fMP4, MP4, WebM, HLS/CMAF via `HlsAv1Video`}: every frame shown, correctly paced, pixels on the canvas, the thread count that ran — 54 combinations, on a cross-origin-isolated harness page. |
 | `node scripts/bench-browser.mjs` | Decode speed per thread count in the real engines, same frame hash in every configuration. |
 | `scripts/bench.mjs` | Decode speed on real 360p/720p/1080p clips (`scripts/fetch-samples.sh`), with libdav1d MD5 check. |

@@ -85,7 +85,7 @@ jobs:
       - name: tests against the built wasm
         run: |
           cargo test --release
-          node --test test/decode.test.mjs
+          node --test test/decode.test.mjs test/copy-guard.test.mjs
       - name: package
         id: pack
         run: |

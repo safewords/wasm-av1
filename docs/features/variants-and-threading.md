@@ -1,7 +1,7 @@
 # wasm variants, detection and threading
 
-> **Status:** PARTIAL — the four variants work, and decode on real threads in the threads builds; threads buy little on a one-tile stream; no browser has run the 0.3.0 build through the Playwright matrix.
-> **Owners (code):** `js/detect.js`, `js/loader.js`, `src/threads.rs`, `js/thread-worker.js`, `scripts/build.sh`, `Cargo.toml`
+> **Status:** PARTIAL — the four variants work, and decode on real threads in the threads builds, in Chromium, Firefox and WebKit; threads buy little on a one-tile stream.
+> **Owners (code):** `js/detect.js`, `js/loader.js`, `src/threads.rs`, `js/thread-worker.js`, `scripts/build.sh`, `tools/wasm-copy-guard`, `Cargo.toml`
 > **Related docs:** [js-api-and-worker.md](./js-api-and-worker.md), [build-and-release.md](./build-and-release.md), [`../rivet-av1.md`](../rivet-av1.md), [`../performance.md`](../performance.md), [`../integration.md`](../integration.md)
 > **Last verified against code:** 2026-11-12 @ `162385f`
 
@@ -32,7 +32,7 @@ threading is part of the performance work under way in rivet-av1;
 |---|---|---|
 | `baseline` | rustc's default wasm32 features | Chrome 96, Firefox 89, Safari 15 |
 | `simd` | `+simd128` | Chrome 91, Firefox 89, Safari 16.4 |
-| `threads` | `+atomics,+bulk-memory,+mutable-globals`, shared imported memory (max 1 GiB), `-Zbuild-std` | + cross-origin isolation (Safari 15.2) |
+| `threads` | `+atomics,+bulk-memory,+mutable-globals`, shared imported memory (max 1 GiB), `-Zbuild-std`; then `tools/wasm-copy-guard` on the `.wasm` | + cross-origin isolation (Safari 15.2) |
 | `simd-threads` | both | + cross-origin isolation |
 
 ## How it works today
@@ -111,6 +111,40 @@ Thread count: `Av1Player` resolves `threads: 'auto'` to
 
 ### Edge cases & gotchas
 
+- **WebKit: `memory.copy` and `memory.fill` trap on memory another Worker
+  grew (fixed 2026-11-13).** In JavaScriptCore, when one Worker grows a
+  shared `WebAssembly.Memory`, an instance in another Worker keeps the old
+  size: its `memory.size` returns it, and its `memory.copy` and
+  `memory.fill` check bounds against it and trap ("Out of bounds memory
+  access") on the grown pages. Loads, stores, atomic read-modify-writes,
+  `memory.atomic.wait32` and `notify` on the same pages work, and so do two
+  instances in one Worker. Only the instance's own `memory.grow` of a page
+  or more brings it up to date (`grow(0)`, a failing grow and reading
+  `memory.buffer` do not). Every decoder thread is an instance in its own
+  Worker, any of them can grow the heap, and with bulk-memory (which shared
+  memory requires) every `memcpy`/`memset` in the decoder is one of the two
+  instructions, so with more than one thread a decode in WebKit died within
+  the first frames: the decode Worker with "Out of bounds memory access"
+  and then "recursive use of an object detected" on every later call, the
+  thread Workers with the same trap in `Pool::worker`. That held for 0.2.0
+  to 0.2.2 (rav1d) and 0.3.0 (rivet-av1) alike. Measured in Playwright's
+  macOS WebKit 623.1.10 (Playwright 1.56, `webkit-2215`) on 2026-11-12;
+  WebKit 626.1.1 (Playwright 1.62, `webkit-2336`) does not have it, and
+  neither do Chromium or Firefox. Which Safari releases do was not tested.
+  The bug cannot be avoided at compile time: wasm-ld refuses shared memory
+  without `bulk-memory`, LLVM strips atomics without it, and in LLVM
+  `bulk-memory` implies `bulk-memory-opt`, which is what lowers `memcpy` to
+  `memory.copy`. So `scripts/build.sh` runs `tools/wasm-copy-guard` on the
+  two threads variants after wasm-bindgen: every `memory.copy` and
+  `memory.fill` becomes a call to a helper that runs the instruction when
+  the range is within the instance's own `memory.size`, and otherwise
+  copies or fills with 8-byte and 1-byte loads and stores. On an engine
+  without the bug `memory.size` is always current, so every in-bounds call
+  takes the instruction; on Chromium, bbb-720p decoded at the same speed
+  guarded and unguarded (22.8 against 22.4 ms a frame on 8 threads, within
+  the run-to-run spread). `test/copy-guard.test.mjs` holds both paths of
+  the helpers to memmove/memset; `test/browser.mjs` reports whether each
+  engine has the bug and plays the threads variants in all three.
 - **Thread Workers end with the decoder (fixed 2026-11-13).** A pool worker
   never returns, by design, and the page creates it, so terminating the
   decode Worker does not end it. Until this fix nothing did: every threaded
@@ -136,6 +170,10 @@ Thread count: `Av1Player` resolves `threads: 'auto'` to
 
 ## History & references
 
+- 2026-11-13: the WebKit stale-size bug found and worked around
+  (`tools/wasm-copy-guard`), above. decodeanywhere.dev's end-to-end suite
+  found it, where it is marked as an expected failure in WebKit until a
+  release carries the fix.
 - [`../rivet-av1.md`](../rivet-av1.md): the core, its `av1::parallel` hook
   (rivet-av1 `d041af0`) and wasm SIMD128 kernels (`3c2c549`), and every
   measurement.

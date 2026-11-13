@@ -1,0 +1,17 @@
+[package]
+name = "wasm-copy-guard"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.99"
+license = "Apache-2.0"
+description = "Post-link pass for wasm-av1's threads builds: routes memory.copy/memory.fill through helpers that survive JavaScriptCore's stale view of a shared memory grown by another Worker."
+publish = false
+
+# Its own package, not a member of wasm-av1's (which has no workspace): a
+# native build tool that scripts/build.sh runs on the threads variants.
+[workspace]
+
+[dependencies]
+# The same walrus wasm-bindgen-cli 0.2.130 uses to write the module this
+# rewrites, so everything wasm-bindgen emits parses.
+walrus = "=0.27.3"

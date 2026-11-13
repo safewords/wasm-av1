@@ -15,6 +15,22 @@ becomes that release when it is tagged.
 
 ### Fixed
 
+- **The threads builds work in WebKit (Safari's engine) with more than one
+  thread.** They failed in every release so far (0.2.0 to 0.2.2), within the
+  first frames: "Out of bounds memory access" from the decoder, then
+  "recursive use of an object detected which would lead to unsafe aliasing
+  in rust" on every later call. The cause is a JavaScriptCore bug: after one
+  Worker grows a shared memory, `memory.copy` and `memory.fill` in another
+  Worker's instance still check bounds against the old size and trap, and
+  every decoder thread is such an instance. `scripts/build.sh` now runs a
+  post-link pass, `tools/wasm-copy-guard`, on the two threads variants. It
+  routes those two instructions through helpers that fall back to plain
+  loads and stores on pages the instance cannot see. Engines without the
+  bug always take the instruction, at no measurable cost (Chromium, bbb-720p,
+  8 threads). Found by decodeanywhere.dev's end-to-end suite in Playwright's
+  macOS WebKit 623.1.10; WebKit 626.1.1 no longer has the bug, and which
+  Safari releases have it was not tested. `test/copy-guard.test.mjs` tests
+  the pass and `test/browser.mjs` reports whether each engine has the bug.
 - A threaded player no longer leaks its thread Workers. The page creates
   them, a pool thread never returns, and `WorkerDecoder.close()` ended only
   the decode Worker, so each destroyed player left up to seven Workers and

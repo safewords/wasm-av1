@@ -102,7 +102,7 @@ jobs:
         run: |
           if git diff --quiet -- pkg/; then echo "pkg/ matches this build"; else echo "::warning::committed pkg/ differs from this build (expected across OSes; scripts/build.sh regenerates it)"; git diff --stat -- pkg/; fi
       - name: node tests against the built wasm
-        run: node --test test/decode.test.mjs
+        run: node --test test/decode.test.mjs test/copy-guard.test.mjs
       # What `npm publish` would ship (release.yml publishes on a v* tag):
       # package.json must be valid for the registry and the file list complete.
       - name: npm publish --dry-run

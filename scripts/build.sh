@@ -78,6 +78,12 @@ build_variant() {
   mkdir -p "pkg/$name"
   wasm-bindgen "$wasm" --target web --out-dir "pkg/$name" --out-name wasm_av1 \
     $( [ "$PROFILE" = release ] && echo --remove-name-section --remove-producers-section || echo --keep-debug )
+  if [ "$threads" = threads ]; then
+    # Every memory.copy/memory.fill through a helper that JavaScriptCore's
+    # stale view of a memory grown by another Worker cannot trap
+    # (tools/wasm-copy-guard; docs/features/variants-and-threading.md).
+    "$COPY_GUARD" "pkg/$name/wasm_av1_bg.wasm" "pkg/$name/wasm_av1_bg.wasm"
+  fi
   if [ "$PROFILE" = release ]; then
     if command -v wasm-opt >/dev/null 2>&1; then
       local flags=(-O3 --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue)
@@ -92,6 +98,13 @@ build_variant() {
 }
 
 VARIANTS="${VARIANTS:-baseline simd threads simd-threads}"
+# The post-link pass the threads variants need (see build_variant), a native
+# tool with its own Cargo.lock.
+COPY_GUARD=target/tools/release/wasm-copy-guard
+case " $VARIANTS " in *threads*)
+  cargo build --release --locked --manifest-path tools/wasm-copy-guard/Cargo.toml --target-dir target/tools
+  ;;
+esac
 for v in $VARIANTS; do
   case "$v" in
     # Baseline: rustc's default feature set for wasm32-unknown-unknown

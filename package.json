@@ -52,8 +52,8 @@
   },
   "scripts": {
     "build": "bash scripts/build.sh",
-    "test": "bash scripts/build.sh && node --test test/decode.test.mjs",
-    "test:node": "node --test test/decode.test.mjs",
+    "test": "bash scripts/build.sh && node --test test/decode.test.mjs test/copy-guard.test.mjs",
+    "test:node": "node --test test/decode.test.mjs test/copy-guard.test.mjs",
     "test:browser": "node test/browser.mjs",
     "bench:browser": "node scripts/bench-browser.mjs",
     "serve": "node scripts/serve.mjs",

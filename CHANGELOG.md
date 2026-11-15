@@ -10,6 +10,18 @@ A release is a `v*` tag matching the version in `package.json` and
 
 ## [Unreleased]
 
+### Changed
+
+- **The package is smaller: about a fifth less for the SIMD builds.** 0.3.1
+  linked rivet-av1's encoder, which nothing here calls; rivet-av1 now has an
+  `encoder` feature, and this crate takes it without. Its inverse transforms
+  are also compiled once for each kind of line instead of inlined into every
+  size. In local builds (before wasm-opt) the SIMD module goes from 4.51 to
+  3.52 MB and the baseline from 3.35 to 3.12 MB; decoded output is unchanged
+  (the node and browser tests, and rivet-av1's 244 AOM vectors and 3 586
+  Argon streams).
+- rivet-av1 moves to `6a360ec` (rivet `4098f01`).
+
 ## [0.3.1] - 2026-11-14
 
 ### Fixed

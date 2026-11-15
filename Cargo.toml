@@ -19,8 +19,9 @@ crate-type = ["cdylib", "rlib"]
 # https://github.com/safewords/rivet-av1; taken from rivet `main` like
 # rivet-container, so one git source carries both. Nothing of it is vendored
 # here; Cargo.lock pins the revision. docs/rivet-av1.md has what it does, what
-# this crate needs of it, and how fast it is.
-av1 = { git = "https://github.com/rivet-transcoder/rivet", branch = "main", package = "rivet-av1" }
+# this crate needs of it, and how fast it is. Without its default `encoder`
+# feature: a decoder links none of the encoder.
+av1 = { git = "https://github.com/rivet-transcoder/rivet", branch = "main", package = "rivet-av1", default-features = false }
 # The demuxers: MP4/fMP4/CMAF, WebM/MKV, TS. rivet is the org's own transcoder;
 # its `rivet-container` crate hands us AV1 temporal units + pts straight out of
 # a container. rivet `main` carries the commit that lets the crate build

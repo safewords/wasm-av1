@@ -45,16 +45,19 @@ defects.
 ## What you get
 
 ```
-pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     3.00 MB (1.05 MB gzip)  Chrome 96 / Firefox 89 / Safari 15
-pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 3.69 MB (1.21 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
-pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  3.05 MB (1.06 MB gzip)  + cross-origin isolation (Safari 15.2)
-pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      3.74 MB (1.22 MB gzip)  + cross-origin isolation
+pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     3.35 MB (1.17 MB gzip)  Chrome 96 / Firefox 89 / Safari 15
+pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 4.51 MB (1.41 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
+pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  3.40 MB (1.17 MB gzip)  + cross-origin isolation (Safari 15.2)
+pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      4.56 MB (1.42 MB gzip)  + cross-origin isolation
 pkg/thread-worker.js               the Worker each decoder thread runs in
 js/                                ESM wrapper: loader + feature detection, Decoder, WebGL/2D renderers, Worker, Av1Player, HlsAv1Video
 ```
 
-Those sizes are CI's build of 0.3.0 with `wasm-opt -O3` (2026-11-13), which
-is what `pkg/` holds. CI built the last rav1d commit on 2026-11-12 at
+Those sizes are CI's build of 0.3.1 with `wasm-opt -O3` (2026-11-14), which
+is what `pkg/` holds. 0.3.0 was 3.00 MB baseline and 3.69 MB SIMD: the
+growth is rivet-av1's encoder, linked into this decoder-only build, and an
+inverse transform compiled for four block sizes (see `CHANGELOG.md`, 0.3.1).
+What follows is 0.3.0's account. CI built the last rav1d commit on 2026-11-12 at
 3.30 MB baseline and 3.70 MB SIMD, and 0.3.0 as first built at 2.87 and
 3.43 MB; the speed and threading work in rivet-av1 since has added 0.14 MB
 to the baseline builds and 0.26 MB to the SIMD ones, so the baseline is 9%

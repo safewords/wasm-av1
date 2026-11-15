@@ -68,8 +68,8 @@ commit `pkg/`, tag `vX.Y.Z`, push the tag.
 
 - **The committed `pkg/` can trail `main` by a commit.** It is replaced only
   from CI's build (the pinned `wasm-opt`), never from a local one, by hand,
-  after the source commit that changes the wasm. As of `2a97faf` it is CI's
-  build of that commit (0.3.0, rivet-av1 `03054ad`). Between a source commit
+  after the source commit that changes the wasm. As of `fcb2fc7` it is CI's
+  build of that commit (0.3.1, rivet-av1 `4d14300`). Between a source commit
   and the `pkg/` commit that follows it, consumers of the release tarball
   are unaffected (release.yml builds the tag itself) and consumers of
   `github:safewords/wasm-av1#main` get the previous wasm with newer JS; the

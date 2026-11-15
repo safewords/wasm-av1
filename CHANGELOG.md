@@ -10,6 +10,36 @@ A release is a `v*` tag matching the version in `package.json` and
 
 ## [Unreleased]
 
+### Fixed
+
+- **10- and 12-bit streams that use masked compound prediction decode
+  correctly.** A masked compound's intermediate predictions do not fit 16
+  bits above 8 bits per sample, and rivet-av1 cut them on every target but
+  x86-64, wasm32 included: in 0.3.0 such frames (wedge and difference-weighted
+  compound) came out wrong. rivet-av1 `5929ecc`
+  keeps them in 32 bits; 70 of the Argon conformance streams that were wrong
+  on aarch64 are now exact.
+
+### Changed
+
+- rivet-av1 moves to `4d14300` (rivet `c1e3f89`). Besides the fix above:
+  - **After a corrupt or missing unit the decoder recovers on its own.** A
+    frame that refers to a damaged reference is decoded but not shown, and
+    output resumes, exact, at the next frame that depends on nothing lost (a
+    key frame, or an intra-only frame for what it refreshes). In 0.3.0 the
+    frames after a decode error were decoded against whatever the broken
+    unit had left behind. The unit that fails still reports its error, as
+    before.
+  - A tile with wrong padding is now a decode error; no conformance stream
+    has one, and it is the surest sign of damaged data.
+  - The decoder recycles the post-filters' frame buffers instead of
+    allocating new ones.
+  - Output of every stream that decoded correctly in 0.3.0 is unchanged, bit
+    for bit, and the speed is the same: on a 1280×720 clip in Node the
+    baseline and SIMD builds decode at 1.0 to 1.06 times 0.3.0's rate (three
+    interleaved runs, both built the same way). rivet-av1 now passes all
+    3 586 Argon conformance streams and the 244 AOM test vectors.
+
 ## [0.3.0] - 2026-11-13
 
 ### Fixed

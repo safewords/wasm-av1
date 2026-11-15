@@ -10,6 +10,8 @@ A release is a `v*` tag matching the version in `package.json` and
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-14
+
 ### Fixed
 
 - **10- and 12-bit streams that use masked compound prediction decode
@@ -26,9 +28,11 @@ A release is a `v*` tag matching the version in `package.json` and
   - **After a corrupt or missing unit the decoder recovers on its own.** A
     frame that refers to a damaged reference is decoded but not shown, and
     output resumes, exact, at the next frame that depends on nothing lost (a
-    key frame, or an intra-only frame for what it refreshes). In 0.3.0 the
-    frames after a decode error were decoded against whatever the broken
-    unit had left behind. The unit that fails still reports its error, as
+    key frame, or an intra-only frame for what it refreshes), so the frames
+    between are not shown decoded against references the broken unit left
+    wrong. AV1 carries no checksum, so damage that still parses can go
+    unnoticed (in rivet-av1's tests, 61 of 2 240 corrupted copies of the
+    conformance vectors). The unit that fails still reports its error, as
     before.
   - A tile with wrong padding is now a decode error; no conformance stream
     has one, and it is the surest sign of damaged data.
@@ -39,6 +43,17 @@ A release is a `v*` tag matching the version in `package.json` and
     baseline and SIMD builds decode at 1.0 to 1.06 times 0.3.0's rate (three
     interleaved runs, both built the same way). rivet-av1 now passes all
     3 586 Argon conformance streams and the 244 AOM test vectors.
+- **The package is larger**: CI's builds are 3.35 MB baseline (1.17 MB
+  gzip) and 4.51 MB SIMD (1.41 MB gzip), against 0.3.0's 3.00 MB (1.05 MB)
+  and 3.69 MB (1.21 MB). Almost all of it is rivet-av1's encoder work this
+  week, which none of this package's code calls: the encoder shares the
+  decoder's tile code through a context that is only known at run time, so
+  its code is linked into a decoder-only build (about 330 KB of the SIMD
+  build, 75 KB in 0.3.0), and the inverse transform is now compiled for
+  four block-size limits instead of one (561 KB, 200 KB in 0.3.0). Without
+  the demuxers, a local build without `wasm-opt` grew from 396 KB to 587 KB
+  gzip (SIMD). Leaving the encoder out at compile time is for a later
+  release.
 
 ## [0.3.0] - 2026-11-13
 
@@ -244,7 +259,8 @@ A release is a `v*` tag matching the version in `package.json` and
 - A release pipeline: a `v*` tag publishes an npm tarball and a `pkg/` zip on
   the GitHub Release.
 
-[unreleased]: https://github.com/safewords/wasm-av1/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/safewords/wasm-av1/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/safewords/wasm-av1/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/safewords/wasm-av1/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/safewords/wasm-av1/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/safewords/wasm-av1/compare/v0.2.0...v0.2.1

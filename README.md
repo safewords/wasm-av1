@@ -45,18 +45,20 @@ defects.
 ## What you get
 
 ```
-pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     3.35 MB (1.17 MB gzip)  Chrome 96 / Firefox 89 / Safari 15
-pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 4.51 MB (1.41 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
-pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  3.40 MB (1.17 MB gzip)  + cross-origin isolation (Safari 15.2)
-pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      4.56 MB (1.42 MB gzip)  + cross-origin isolation
+pkg/baseline/wasm_av1_bg.wasm      post-MVP wasm                     2.95 MB (1.03 MB gzip)  Chrome 96 / Firefox 89 / Safari 15
+pkg/simd/wasm_av1_bg.wasm          + simd128 kernels                 3.43 MB (1.15 MB gzip)  Chrome 91 / Firefox 89 / Safari 16.4
+pkg/threads/wasm_av1_bg.wasm       baseline + atomics/shared memory  2.99 MB (1.03 MB gzip)  + cross-origin isolation (Safari 15.2)
+pkg/simd-threads/wasm_av1_bg.wasm  simd + atomics/shared memory      3.47 MB (1.17 MB gzip)  + cross-origin isolation
 pkg/thread-worker.js               the Worker each decoder thread runs in
 js/                                ESM wrapper: loader + feature detection, Decoder, WebGL/2D renderers, Worker, Av1Player, HlsAv1Video
 ```
 
-Those sizes are CI's build of 0.3.1 with `wasm-opt -O3` (2026-11-14), which
-is what `pkg/` holds. 0.3.0 was 3.00 MB baseline and 3.69 MB SIMD: the
-growth is rivet-av1's encoder, linked into this decoder-only build, and an
-inverse transform compiled for four block sizes (see `CHANGELOG.md`, 0.3.1).
+Those sizes are CI's build of 0.3.2 with `wasm-opt -O3` (2026-11-14), which
+is what `pkg/` holds. 0.3.1 was 3.35 MB baseline and 4.51 MB SIMD, larger
+than 0.3.0's 3.00 and 3.69 MB because it linked rivet-av1's encoder and an
+inverse transform compiled for four block sizes; 0.3.2 takes rivet-av1
+without its `encoder` feature and with the transform compiled once for each
+kind of line, and is smaller than 0.3.0 (see `CHANGELOG.md`).
 What follows is 0.3.0's account. CI built the last rav1d commit on 2026-11-12 at
 3.30 MB baseline and 3.70 MB SIMD, and 0.3.0 as first built at 2.87 and
 3.43 MB; the speed and threading work in rivet-av1 since has added 0.14 MB
@@ -66,7 +68,8 @@ was smaller still (1.70 MB baseline, 606 KB gzip) because it was built in
 August, before the rivet-container update of 2026-11-06 that most of each
 file now is: without the `container` feature a local build without
 `wasm-opt` was 681 KB baseline (268 KB gzip) and 871 KB SIMD (314 KB gzip)
-as 0.3.0 was first built, and has not been measured since.
+as 0.3.0 was first built; on 0.3.2's rivet-av1 the SIMD build without the
+container is 923 KB (340 KB gzip), also without `wasm-opt`.
 
 The threads builds give the decoder a pool of Web Workers on the same shared
 memory. A frame of one tile is parsed on one thread while the others

@@ -125,7 +125,11 @@ fn main() {
             frames += 1;
         }
     }
-    let md5 = format!("{:x}", hasher.finalize());
+    let md5: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     if only_md5 {
         println!("{md5}");
         return;

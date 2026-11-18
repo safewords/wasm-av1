@@ -10,6 +10,12 @@ A release is a `v*` tag matching the version in `package.json` and
 
 ## [Unreleased]
 
+### Changed
+
+- rivet-av1 and rivet-container move to rivet's current `main`; rivet-av1's
+  changes there are to its encoder, which this crate does not link. The
+  tests hash with md-5 0.11. The committed `pkg/` is not rebuilt.
+
 ## [0.3.2] - 2026-11-14
 
 ### Changed

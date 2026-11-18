@@ -74,7 +74,7 @@ fn md5_of(frames: &[wasm_av1::Frame]) -> String {
     for f in frames {
         h.update(&f.data);
     }
-    format!("{:x}", h.finalize())
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[test]

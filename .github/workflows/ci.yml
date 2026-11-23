@@ -34,7 +34,7 @@ env:
 jobs:
   native:
     name: cargo fmt, clippy, test
-    runs-on: ubuntu-latest
+    runs-on: safewords-runners
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -58,7 +58,7 @@ jobs:
 
   wasm:
     name: build the variants, test them in Node
-    runs-on: ubuntu-latest
+    runs-on: safewords-runners
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5

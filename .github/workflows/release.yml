@@ -46,7 +46,7 @@ env:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: safewords-runners
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5

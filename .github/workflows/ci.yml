@@ -3,8 +3,11 @@
 # build artefacts. The threads variants rebuild std with atomics, hence the
 # rust-src component (rust-toolchain.toml lists it too).
 #
-# Public repository, so GitHub's hosted runners. The wasm-bindgen CLI is
-# pinned to the crate version in Cargo.lock; binaryen comes from GitHub
+# Public repository, on the safewords-runners fleet since 2026-11-23. Outside
+# code cannot reach the fleet: pull requests are collaborators-only and a fork's
+# runs need approval for every external contributor (both repository settings).
+#
+# The wasm-bindgen CLI is pinned to the crate version in Cargo.lock; binaryen comes from GitHub
 # releases so wasm-opt runs the same version everywhere. Releases are cut by
 # release.yml on a `v*` tag, which reuses the same steps.
 name: wasm-av1
